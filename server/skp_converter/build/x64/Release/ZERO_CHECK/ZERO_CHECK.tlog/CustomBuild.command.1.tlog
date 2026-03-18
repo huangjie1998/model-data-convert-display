@@ -1,0 +1,10 @@
+^C:\DEVELOPMENT\模型数据转换显示\SERVER\SKP_CONVERTER\BUILD\CMAKEFILES\BB354640ED19E182B830A13614F7623E\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/development/模型数据转换显示/server/skp_converter -BC:/development/模型数据转换显示/server/skp_converter/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/development/模型数据转换显示/server/skp_converter/build/skp_converter.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

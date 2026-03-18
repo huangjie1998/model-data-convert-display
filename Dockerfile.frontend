@@ -1,0 +1,23 @@
+# 前端构建 + 服务（不依赖外部 nginx 镜像）
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+# 使用轻量级的 serve 工具代替 nginx
+FROM node:20-alpine
+
+WORKDIR /app
+RUN npm install -g serve
+
+COPY --from=builder /app/dist ./dist
+COPY nginx.conf ./
+
+EXPOSE 80
+
+# 使用 serve 提供静态文件，并代理 /api 到后端
+CMD ["serve", "-s", "dist", "-l", "80"]

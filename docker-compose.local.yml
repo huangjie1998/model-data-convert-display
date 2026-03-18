@@ -1,0 +1,43 @@
+name: cad-converter
+
+services:
+  # 后端转换服务
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: cad-converter-backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - cad_uploads:/tmp/cad_converter
+      - ./server/uploads:/app/uploads
+      - ./server/converted:/app/converted
+    environment:
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - cad-network
+
+  # 前端服务（使用本地 Node 构建，不需要 Nginx 镜像）
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: cad-converter-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - cad-network
+
+volumes:
+  cad_uploads:
+    driver: local
+
+networks:
+  cad-network:
+    driver: bridge

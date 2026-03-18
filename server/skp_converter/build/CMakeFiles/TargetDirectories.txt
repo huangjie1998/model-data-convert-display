@@ -1,0 +1,5 @@
+C:/development/模型数据转换显示/server/skp_converter/build/CMakeFiles/skp_converter.dir
+C:/development/模型数据转换显示/server/skp_converter/build/CMakeFiles/test_converter.dir
+C:/development/模型数据转换显示/server/skp_converter/build/CMakeFiles/INSTALL.dir
+C:/development/模型数据转换显示/server/skp_converter/build/CMakeFiles/ALL_BUILD.dir
+C:/development/模型数据转换显示/server/skp_converter/build/CMakeFiles/ZERO_CHECK.dir

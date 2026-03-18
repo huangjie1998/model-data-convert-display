@@ -1,0 +1,98 @@
+name: Build SKP Converter DLL
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'server/skp_converter/**'
+      - '.github/workflows/build-skp-converter.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'server/skp_converter/**'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+      
+    - name: Setup MSVC
+      uses: microsoft/setup-msbuild@v1.1
+      
+    - name: Create Build Directory
+      run: mkdir -p server/skp_converter/build
+      
+    - name: Configure CMake
+      working-directory: server/skp_converter
+      run: |
+        cmake -B build -S . -G "Visual Studio 17 2022" -A x64
+      
+    - name: Build Release
+      working-directory: server/skp_converter
+      run: |
+        cmake --build build --config Release --parallel
+      
+    - name: Build Debug
+      working-directory: server/skp_converter
+      run: |
+        cmake --build build --config Debug --parallel
+      
+    - name: Prepare Artifacts
+      run: |
+        mkdir -p artifacts/Release
+        mkdir -p artifacts/Debug
+        
+        # Copy Release files
+        cp server/skp_converter/build/bin/Release/*.dll artifacts/Release/
+        cp server/skp_converter/build/lib/Release/*.lib artifacts/Release/
+        
+        # Copy Debug files
+        cp server/skp_converter/build/bin/Debug/*.dll artifacts/Debug/
+        cp server/skp_converter/build/lib/Debug/*.lib artifacts/Debug/
+        
+        # Copy headers
+        cp server/skp_converter/*.h artifacts/
+        
+        # Copy Python wrapper
+        cp server/skp_converter/skp_converter.py artifacts/
+        cp server/skp_converter/test_dll.py artifacts/
+      shell: bash
+      
+    - name: Upload Release Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: skp-converter-release
+        path: artifacts/Release/
+        
+    - name: Upload Debug Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: skp-converter-debug
+        path: artifacts/Debug/
+        
+    - name: Upload Complete Package
+      uses: actions/upload-artifact@v3
+      with:
+        name: skp-converter-complete
+        path: artifacts/
+        
+    - name: Create Release Package
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: |
+        cd artifacts
+        7z a ../skp-converter-windows-x64.zip .
+      shell: bash
+      
+    - name: Upload to Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/upload-artifact@v3
+      with:
+        name: skp-converter-windows-x64-zip
+        path: skp-converter-windows-x64.zip
