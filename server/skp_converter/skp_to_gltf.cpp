@@ -9,15 +9,18 @@
 #include <SketchUpAPI/model/axes.h>
 #include <SketchUpAPI/model/component_definition.h>
 #include <SketchUpAPI/model/component_instance.h>
+#include <SketchUpAPI/model/drawing_element.h>
 #include <SketchUpAPI/model/entities.h>
 #include <SketchUpAPI/model/entity.h>
 #include <SketchUpAPI/model/face.h>
 #include <SketchUpAPI/model/group.h>
 #include <SketchUpAPI/model/image_rep.h>
+#include <SketchUpAPI/model/layer.h>
 #include <SketchUpAPI/model/material.h>
 #include <SketchUpAPI/model/mesh_helper.h>
 #include <SketchUpAPI/model/model.h>
 #include <SketchUpAPI/model/texture.h>
+#include <SketchUpAPI/model/texture_writer.h>
 
 #include <algorithm>
 #include <cmath>
@@ -712,9 +715,46 @@ static void AddFaceSideGeometry(
     }
 }
 
-static void ProcessFace(SUFaceRef face, MeshData& mesh, const SUTransformation* transform) {
+static SUMaterialRef GetLayerMaterialForDrawingElement(SUDrawingElementRef drawing_element) {
+    if (SUIsInvalid(drawing_element)) return SU_INVALID;
+    SULayerRef layer = SU_INVALID;
+    if (SUDrawingElementGetLayer(drawing_element, &layer) != SU_ERROR_NONE || SUIsInvalid(layer)) return SU_INVALID;
+
+    SUMaterialRef layer_material = SU_INVALID;
+    if (SULayerGetMaterial(layer, &layer_material) != SU_ERROR_NONE) return SU_INVALID;
+    return layer_material;
+}
+
+static SUMaterialRef GetDirectOrLayerMaterial(SUDrawingElementRef drawing_element) {
+    if (SUIsInvalid(drawing_element)) return SU_INVALID;
+
+    SUMaterialRef material = SU_INVALID;
+    SUDrawingElementGetMaterial(drawing_element, &material);
+    if (SUIsValid(material)) return material;
+
+    return GetLayerMaterialForDrawingElement(drawing_element);
+}
+
+static SUMaterialRef ResolveMaterialOrFallback(SUMaterialRef face_material, SUMaterialRef inherited_material) {
+    return SUIsValid(face_material) ? face_material : inherited_material;
+}
+
+static void ProcessFace(
+    SUFaceRef face,
+    MeshData& mesh,
+    const SUTransformation* transform,
+    SUMaterialRef inherited_front_material,
+    SUMaterialRef inherited_back_material,
+    SUTextureWriterRef texture_writer
+) {
     SUMeshHelperRef helper = SU_INVALID;
-    if (SUMeshHelperCreate(&helper, face) != SU_ERROR_NONE || SUIsInvalid(helper)) return;
+    enum SUResult mesh_result = SU_ERROR_NO_DATA;
+    if (SUIsValid(texture_writer)) {
+        mesh_result = SUMeshHelperCreateWithTextureWriter(&helper, face, texture_writer);
+    }
+    if (mesh_result != SU_ERROR_NONE || SUIsInvalid(helper)) {
+        if (SUMeshHelperCreate(&helper, face) != SU_ERROR_NONE || SUIsInvalid(helper)) return;
+    }
 
     size_t vertex_count = 0;
     if (SUMeshHelperGetNumVertices(helper, &vertex_count) != SU_ERROR_NONE || vertex_count == 0) {
@@ -765,9 +805,16 @@ static void ProcessFace(SUFaceRef face, MeshData& mesh, const SUTransformation* 
     SUMaterialRef back_material = SU_INVALID;
     SUFaceGetFrontMaterial(face, &front_material);
     SUFaceGetBackMaterial(face, &back_material);
+    SUMaterialRef face_layer_material = GetLayerMaterialForDrawingElement(SUFaceToDrawingElement(face));
+
+    front_material = ResolveMaterialOrFallback(front_material, inherited_front_material);
+    if (!SUIsValid(front_material)) front_material = face_layer_material;
+    back_material = ResolveMaterialOrFallback(back_material, inherited_back_material);
+    if (!SUIsValid(back_material)) back_material = face_layer_material;
+    if (!SUIsValid(back_material)) back_material = front_material;
 
     const int front_material_index = EnsureMaterial(front_material, mesh);
-    const int back_material_index = SUIsValid(back_material) ? EnsureMaterial(back_material, mesh) : front_material_index;
+    const int back_material_index = EnsureMaterial(back_material, mesh);
 
     AddFaceSideGeometry(mesh, front_material_index, positions, front_stq, tri_indices, false, transform);
     AddFaceSideGeometry(
@@ -783,14 +830,28 @@ static void ProcessFace(SUFaceRef face, MeshData& mesh, const SUTransformation* 
     SUMeshHelperRelease(&helper);
 }
 
-static void TraverseEntities(SUEntitiesRef entities, MeshData& mesh, const SUTransformation* parent_transform) {
+static void TraverseEntities(
+    SUEntitiesRef entities,
+    MeshData& mesh,
+    const SUTransformation* parent_transform,
+    SUMaterialRef inherited_front_material,
+    SUMaterialRef inherited_back_material,
+    SUTextureWriterRef texture_writer
+) {
     size_t face_count = 0;
     SUEntitiesGetNumFaces(entities, &face_count);
     if (face_count > 0) {
         std::vector<SUFaceRef> faces(face_count);
         SUEntitiesGetFaces(entities, face_count, &faces[0], &face_count);
         for (size_t i = 0; i < face_count; ++i) {
-            ProcessFace(faces[i], mesh, parent_transform);
+            ProcessFace(
+                faces[i],
+                mesh,
+                parent_transform,
+                inherited_front_material,
+                inherited_back_material,
+                texture_writer
+            );
         }
     }
 
@@ -816,7 +877,23 @@ static void TraverseEntities(SUEntitiesRef entities, MeshData& mesh, const SUTra
             SUEntitiesRef child_entities = SU_INVALID;
             SUComponentDefinitionGetEntities(definition, &child_entities);
             if (SUIsInvalid(child_entities)) continue;
-            TraverseEntities(child_entities, mesh, &combined);
+
+            SUMaterialRef instance_material = GetDirectOrLayerMaterial(SUComponentInstanceToDrawingElement(instances[i]));
+            SUMaterialRef definition_material = GetDirectOrLayerMaterial(SUComponentDefinitionToDrawingElement(definition));
+            SUMaterialRef container_material = SUIsValid(instance_material) ? instance_material : definition_material;
+            SUMaterialRef child_front_material =
+                SUIsValid(container_material) ? container_material : inherited_front_material;
+            SUMaterialRef child_back_material =
+                SUIsValid(container_material) ? container_material : inherited_back_material;
+
+            TraverseEntities(
+                child_entities,
+                mesh,
+                &combined,
+                child_front_material,
+                child_back_material,
+                texture_writer
+            );
         }
     }
 
@@ -838,7 +915,72 @@ static void TraverseEntities(SUEntitiesRef entities, MeshData& mesh, const SUTra
             SUEntitiesRef child_entities = SU_INVALID;
             SUGroupGetEntities(groups[i], &child_entities);
             if (SUIsInvalid(child_entities)) continue;
-            TraverseEntities(child_entities, mesh, &combined);
+
+            SUMaterialRef group_material = GetDirectOrLayerMaterial(SUGroupToDrawingElement(groups[i]));
+            SUMaterialRef child_front_material =
+                SUIsValid(group_material) ? group_material : inherited_front_material;
+            SUMaterialRef child_back_material =
+                SUIsValid(group_material) ? group_material : inherited_back_material;
+
+            TraverseEntities(
+                child_entities,
+                mesh,
+                &combined,
+                child_front_material,
+                child_back_material,
+                texture_writer
+            );
+        }
+    }
+}
+
+static void LoadTextureWriterEntities(SUTextureWriterRef writer, SUEntitiesRef entities) {
+    if (SUIsInvalid(writer) || SUIsInvalid(entities)) return;
+
+    size_t face_count = 0;
+    SUEntitiesGetNumFaces(entities, &face_count);
+    if (face_count > 0) {
+        std::vector<SUFaceRef> faces(face_count);
+        SUEntitiesGetFaces(entities, face_count, &faces[0], &face_count);
+        for (size_t i = 0; i < face_count; ++i) {
+            long front_texture_id = 0;
+            long back_texture_id = 0;
+            SUTextureWriterLoadFace(writer, faces[i], &front_texture_id, &back_texture_id);
+        }
+    }
+
+    size_t instance_count = 0;
+    SUEntitiesGetNumInstances(entities, &instance_count);
+    if (instance_count > 0) {
+        std::vector<SUComponentInstanceRef> instances(instance_count);
+        SUEntitiesGetInstances(entities, instance_count, &instances[0], &instance_count);
+        for (size_t i = 0; i < instance_count; ++i) {
+            long texture_id = 0;
+            SUTextureWriterLoadEntity(writer, SUComponentInstanceToEntity(instances[i]), &texture_id);
+
+            SUComponentDefinitionRef definition = SU_INVALID;
+            SUComponentInstanceGetDefinition(instances[i], &definition);
+            if (SUIsInvalid(definition)) continue;
+            SUEntitiesRef child_entities = SU_INVALID;
+            SUComponentDefinitionGetEntities(definition, &child_entities);
+            if (SUIsInvalid(child_entities)) continue;
+            LoadTextureWriterEntities(writer, child_entities);
+        }
+    }
+
+    size_t group_count = 0;
+    SUEntitiesGetNumGroups(entities, &group_count);
+    if (group_count > 0) {
+        std::vector<SUGroupRef> groups(group_count);
+        SUEntitiesGetGroups(entities, group_count, &groups[0], &group_count);
+        for (size_t i = 0; i < group_count; ++i) {
+            long texture_id = 0;
+            SUTextureWriterLoadEntity(writer, SUGroupToEntity(groups[i]), &texture_id);
+
+            SUEntitiesRef child_entities = SU_INVALID;
+            SUGroupGetEntities(groups[i], &child_entities);
+            if (SUIsInvalid(child_entities)) continue;
+            LoadTextureWriterEntities(writer, child_entities);
         }
     }
 }
@@ -1188,9 +1330,18 @@ SKP_API int skp_to_glb(const char* input_path, const char* output_path) {
         }
     }
 
-    TraverseEntities(entities, mesh, root_transform_ptr);
+    SUTextureWriterRef texture_writer = SU_INVALID;
+    if (SUTextureWriterCreate(&texture_writer) == SU_ERROR_NONE && SUIsValid(texture_writer)) {
+        LoadTextureWriterEntities(texture_writer, entities);
+    }
+
+    TraverseEntities(entities, mesh, root_transform_ptr, SU_INVALID, SU_INVALID, texture_writer);
 
     int result = WriteGLB(output_path, mesh);
+
+    if (SUIsValid(texture_writer)) {
+        SUTextureWriterRelease(&texture_writer);
+    }
 
     SUModelRelease(&model);
     SUTerminate();

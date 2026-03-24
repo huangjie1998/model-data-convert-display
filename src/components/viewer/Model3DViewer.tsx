@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, Suspense, useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
 import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber';
-import { OrbitControls, Grid, Box, Text } from '@react-three/drei';
+import { OrbitControls, Grid, Box, Text, Environment } from '@react-three/drei';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
@@ -596,10 +596,15 @@ export function Model3DViewer({ fileUrl, fileType }: Model3DViewerProps) {
       </div>
 
       <div className="flex-1 relative">
-        <Canvas camera={{ position: [8, 8, 6], up: [0, 0, 1], fov: 50 }}>
-          <ambientLight intensity={0.8} />
-          <directionalLight position={[10, 10, 10]} intensity={1.5} />
-          <directionalLight position={[-5, -5, 5]} intensity={0.5} />
+        <Canvas
+          camera={{ position: [8, 8, 6], up: [0, 0, 1], fov: 50 }}
+          gl={{ toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.25 }}
+        >
+          <ambientLight intensity={1.2} />
+          <hemisphereLight args={['#ffffff', '#556070', 0.9]} />
+          <directionalLight position={[10, 12, 14]} intensity={2.2} />
+          <directionalLight position={[-8, -6, 10]} intensity={1.0} />
+          <Environment preset="studio" />
 
           {showGrid && (
             <Grid

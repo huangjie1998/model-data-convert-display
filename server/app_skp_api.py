@@ -30,19 +30,39 @@ logger = logging.getLogger(__name__)
 # 閺屻儲澹楧LL鐠侯垰绶?
 BASE_DIR = Path(__file__).parent
 DLL_PATHS = [
-    BASE_DIR / 'skp_converter' / 'build_verify' / 'bin' / 'Release' / 'skp_converter.dll',  # verify build output
     BASE_DIR / 'skp_converter' / 'build' / 'bin' / 'Release' / 'skp_converter.dll',  # local build output
+    BASE_DIR / 'skp_converter' / 'build_verify' / 'bin' / 'Release' / 'skp_converter.dll',  # verify build output
     BASE_DIR / 'skp_converter' / 'skp_converter.dll',  # dev path
     BASE_DIR / '..' / 'skp_converter_deploy' / 'skp_converter.dll',  # deploy path
     Path('C:/development/妯″瀷鏁版嵁杞崲鏄剧ず/skp_converter_deploy/skp_converter.dll'),  # absolute fallback
 ]
 
-SKP_DLL_PATH = None
-for path in DLL_PATHS:
-    if path.exists():
-        SKP_DLL_PATH = str(path.resolve())
-        logger.info(f"Found SKP converter DLL: {SKP_DLL_PATH}")
-        break
+def resolve_skp_dll_path():
+    """Resolve the converter DLL path deterministically.
+
+    Priority:
+    1) SKP_DLL_PATH env override
+    2) Newest existing file among DLL_PATHS
+    """
+    env_path = os.environ.get('SKP_DLL_PATH', '').strip()
+    if env_path:
+        p = Path(env_path)
+        if p.exists():
+            resolved = str(p.resolve())
+            logger.info(f"Using SKP DLL from env SKP_DLL_PATH: {resolved}")
+            return resolved
+        logger.warning(f"SKP_DLL_PATH is set but not found: {env_path}")
+
+    existing = [p for p in DLL_PATHS if p.exists()]
+    if not existing:
+        return None
+
+    newest = max(existing, key=lambda p: p.stat().st_mtime)
+    resolved = str(newest.resolve())
+    logger.info(f"Using newest SKP converter DLL: {resolved}")
+    return resolved
+
+SKP_DLL_PATH = resolve_skp_dll_path()
 
 # 鐏忔繆鐦€电厧鍙?SketchUp C API 濡€虫健
 try:
