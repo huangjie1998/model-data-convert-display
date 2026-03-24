@@ -74,7 +74,7 @@ echo [OK] 后端已启动
 REM 启动前端服务
 echo.
 echo 启动前端服务...
-start "前端服务 (http://localhost:5173)" cmd /c "npx serve -s dist -l 5173"
+start "前端服务 (http://localhost:5174)" cmd /c "npx serve -s dist -l 5174"
 
 echo.
 echo ===================================
@@ -82,7 +82,7 @@ echo  服务启动成功！
 echo ===================================
 echo.
 echo 访问地址:
-echo   - 前端: http://localhost:5173
+echo   - 前端: http://localhost:5174
 echo   - 后端: http://localhost:5000
 echo.
 echo 功能说明:
@@ -92,7 +92,7 @@ echo   - 如需转换 SKP/DWG，请安装 ODAFileConverter
 echo.
 echo 正在打开浏览器...
 timeout /t 3 >nul
-start http://localhost:5173
+start http://localhost:5174
 
 echo.
 echo 提示: 关闭弹出的命令窗口即可停止服务

@@ -4,7 +4,7 @@
 
 | 服务 | 地址 | 状态 |
 |------|------|------|
-| 前端 | http://localhost:5173 | ✅ 运行中 |
+| 前端 | http://localhost:5174 | ✅ 运行中 |
 | 后端 | http://localhost:5000 | ✅ 运行中 |
 | SKP Converter DLL | skp_converter_deploy/ | ✅ 已加载 |
 
@@ -37,7 +37,7 @@ curl http://localhost:5000/api/converters/status
 
 ### 3. 使用前端上传 SKP 文件
 
-1. 打开浏览器访问：http://localhost:5173
+1. 打开浏览器访问：http://localhost:5174
 2. 切换到 "3D 模型" 标签
 3. 拖拽 SKP 文件到上传区域
 4. 等待转换完成（自动转换为 GLB）
@@ -117,4 +117,4 @@ python test_dll.py test.skp output.glb
 
 ## 浏览器访问
 
-打开 http://localhost:5173 使用完整功能！
+打开 http://localhost:5174 使用完整功能！

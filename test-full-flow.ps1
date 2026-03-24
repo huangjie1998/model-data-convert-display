@@ -8,7 +8,7 @@ Write-Host "  建筑图纸浏览器 - 完整流程测试" -ForegroundColor Cyan
 Write-Host "===================================" -ForegroundColor Cyan
 Write-Host ""
 
-$FrontEndUrl = "http://localhost:5173"
+$FrontEndUrl = "http://localhost:5174"
 $BackEndUrl = "http://localhost:5000"
 
 # 测试 1: 前端服务
@@ -57,5 +57,5 @@ Write-Host "===================================" -ForegroundColor Cyan
 Write-Host "  测试完成" -ForegroundColor Cyan
 Write-Host "===================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "打开浏览器访问: http://localhost:5173" -ForegroundColor Green
+Write-Host "打开浏览器访问: http://localhost:5174" -ForegroundColor Green
 Write-Host ""

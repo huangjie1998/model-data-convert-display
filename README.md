@@ -61,7 +61,7 @@ cd server
 python app.py
 ```
 
-前端将运行在 http://localhost:5173，后端在 http://localhost:5000
+前端将运行在 http://localhost:5174，后端在 http://localhost:5000
 
 ### 生产部署
 

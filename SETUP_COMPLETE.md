@@ -4,7 +4,7 @@
 
 | 组件 | 地址 | 状态 |
 |------|------|------|
-| 前端 | http://localhost:5173 | 运行中 |
+| 前端 | http://localhost:5174 | 运行中 |
 | 后端 | http://localhost:5000 | 运行中 |
 | SKP Converter DLL | 已加载 | 可用 |
 
@@ -18,7 +18,7 @@
 ## 使用方式
 
 ### 1. 访问前端
-打开浏览器访问：http://localhost:5173
+打开浏览器访问：http://localhost:5174
 
 ### 2. 上传 SKP 文件
 - 切换到 "3D 模型" 标签

@@ -64,10 +64,10 @@ class SKPConverter:
         
         # skp_get_stats
         self.dll.skp_get_stats.argtypes = [ctypes.c_char_p]
-        self.dll.skp_get_stats.restype = ctypes.c_char_p
+        self.dll.skp_get_stats.restype = ctypes.c_void_p
         
         # skp_free_string
-        self.dll.skp_free_string.argtypes = [ctypes.c_char_p]
+        self.dll.skp_free_string.argtypes = [ctypes.c_void_p]
         self.dll.skp_free_string.restype = None
     
     def initialize(self) -> bool:
@@ -125,7 +125,7 @@ class SKPConverter:
         info_ptr = self.dll.skp_get_stats(input_bytes)
         
         if info_ptr:
-            info_json = info_ptr.decode('utf-8')
+            info_json = ctypes.string_at(info_ptr).decode('utf-8')
             self.dll.skp_free_string(info_ptr)
             return json.loads(info_json)
         

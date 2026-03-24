@@ -1,20 +1,17 @@
-import { useRef, useState, useEffect, Suspense, useCallback, type Dispatch, type SetStateAction } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Grid, PerspectiveCamera, Box, Text } from '@react-three/drei';
+import { useRef, useState, useEffect, Suspense, useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
+import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber';
+import { OrbitControls, Grid, Box, Text } from '@react-three/drei';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as THREE from 'three';
 import { Button } from '@/components/ui/button';
-import { ZoomIn, ZoomOut, RotateCcw, Maximize, AlertTriangle, FileQuestion } from 'lucide-react';
+import { ZoomIn, ZoomOut, RotateCcw, Maximize, AlertTriangle, FileQuestion, Ruler, X } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
-// 坐标轴组件 - SketchUp 坐标系，Z轴朝上
-// X轴向右(红)，Y轴向前(绿，朝向观察者)，Z轴向上(蓝)
 function AxesHelper({ size = 5 }: { size?: number }) {
   return (
     <>
-      {/* X轴 - 红色 (水平向右) */}
       <line>
         <bufferGeometry>
           <bufferAttribute
@@ -24,7 +21,6 @@ function AxesHelper({ size = 5 }: { size?: number }) {
         </bufferGeometry>
         <lineBasicMaterial color="#ff0000" linewidth={3} />
       </line>
-      {/* Y轴 - 绿色 (水平向前，朝向观察者) */}
       <line>
         <bufferGeometry>
           <bufferAttribute
@@ -34,7 +30,6 @@ function AxesHelper({ size = 5 }: { size?: number }) {
         </bufferGeometry>
         <lineBasicMaterial color="#00ff00" linewidth={3} />
       </line>
-      {/* Z轴 - 蓝色 (竖直向上) */}
       <line>
         <bufferGeometry>
           <bufferAttribute
@@ -44,13 +39,17 @@ function AxesHelper({ size = 5 }: { size?: number }) {
         </bufferGeometry>
         <lineBasicMaterial color="#0000ff" linewidth={3} />
       </line>
-      {/* X标签 - 右侧 */}
-      <Text position={[size + 0.5, 0, 0]} fontSize={0.5} color="#ff0000" anchorX="left" anchorY="middle">X</Text>
-      {/* Y标签 - 前方 */}
-      <Text position={[0, size + 0.5, 0]} fontSize={0.5} color="#00ff00" anchorX="center" anchorY="bottom">Y</Text>
-      {/* Z标签 - 顶部 */}
-      <Text position={[0, 0, size + 0.5]} fontSize={0.5} color="#0000ff" anchorX="center" anchorY="bottom">Z</Text>
-      {/* 原点 */}
+
+      <Text position={[size + 0.5, 0, 0]} fontSize={0.5} color="#ff0000" anchorX="left" anchorY="middle">
+        X
+      </Text>
+      <Text position={[0, size + 0.5, 0]} fontSize={0.5} color="#00ff00" anchorX="center" anchorY="bottom">
+        Y
+      </Text>
+      <Text position={[0, 0, size + 0.5]} fontSize={0.5} color="#0000ff" anchorX="center" anchorY="bottom">
+        Z
+      </Text>
+
       <mesh position={[0, 0, 0]}>
         <sphereGeometry args={[0.1, 16, 16]} />
         <meshBasicMaterial color="#ffffff" />
@@ -65,7 +64,22 @@ interface Model3DViewerProps {
   fileName?: string;
 }
 
-// 加载指示器组件
+interface ModelProps {
+  url: string;
+  fileType: string;
+  onModelReady?: (model: THREE.Group | null) => void;
+  measureEnabled?: boolean;
+  onPickPoint?: (point: THREE.Vector3) => void;
+}
+
+interface FitBoundsResult {
+  box: THREE.Box3;
+  source: 'full' | 'core';
+  sampleCount: number;
+  fullDiag: number;
+  coreDiag: number;
+}
+
 function Loader(): React.ReactElement {
   return (
     <mesh>
@@ -75,20 +89,19 @@ function Loader(): React.ReactElement {
   );
 }
 
-// Controls helper component - must be inside Canvas
-function ControlsHelper({ 
-  setControls, 
-  autoRotate 
-}: { 
+function ControlsHelper({
+  setControls,
+  autoRotate,
+}: {
   setControls: Dispatch<SetStateAction<any>>;
   autoRotate?: boolean;
 }) {
   const orbitRef = useRef<any>(null);
+
   useEffect(() => {
-    if (orbitRef.current) {
-      setControls(orbitRef.current);
-    }
+    if (orbitRef.current) setControls(orbitRef.current);
   }, [setControls]);
+
   return (
     <OrbitControls
       ref={orbitRef}
@@ -101,16 +114,17 @@ function ControlsHelper({
   );
 }
 
-// 3D模型组件
-function Model({ url, fileType }: { url: string; fileType: string }) {
+function Model({ url, fileType, onModelReady, measureEnabled, onPickPoint }: ModelProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [model, setModel] = useState<THREE.Group | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     const loadModel = async () => {
       try {
-        let loadedModel;
+        let loadedModel: THREE.Group;
 
         switch (fileType.toLowerCase()) {
           case 'gltf':
@@ -136,54 +150,51 @@ function Model({ url, fileType }: { url: string; fileType: string }) {
             throw new Error(`不支持的文件格式: ${fileType}`);
         }
 
-        if (loadedModel) {
-          // 遍历所有网格，启用双面渲染
-          loadedModel.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh) {
-              const mesh = child as THREE.Mesh;
-              if (Array.isArray(mesh.material)) {
-                mesh.material.forEach(m => {
-                  if (m) {
-                    m.side = THREE.DoubleSide;
-                    // 确保颜色空间正确
-                    if ((m as THREE.MeshStandardMaterial).color) {
-                      (m as THREE.MeshStandardMaterial).color.setRGB(
-                        (m as THREE.MeshStandardMaterial).color.r,
-                        (m as THREE.MeshStandardMaterial).color.g,
-                        (m as THREE.MeshStandardMaterial).color.b
-                      );
-                    }
-                  }
-                });
-              } else if (mesh.material) {
-                mesh.material.side = THREE.DoubleSide;
-              }
-            }
-          });
-          
-          // 计算边界框并居中模型
-          const box = new THREE.Box3().setFromObject(loadedModel as THREE.Object3D);
-          const center = box.getCenter(new THREE.Vector3());
-          const size = box.getSize(new THREE.Vector3());
-          
-          console.log('Model size:', size.x, size.y, size.z);
-          console.log('Model center:', center.x, center.y, center.z);
-          
-          const maxDim = Math.max(size.x, size.y, size.z);
-          const scale = 10 / maxDim;
-          
-          loadedModel.position.sub(center);
-          loadedModel.scale.multiplyScalar(scale);
-          
-          setModel(loadedModel);
+        if (cancelled) return;
+
+        const lowerType = fileType.toLowerCase();
+        const forceDoubleSide = lowerType !== 'gltf' && lowerType !== 'glb';
+
+        loadedModel.traverse((child) => {
+          if (!(child as THREE.Mesh).isMesh) return;
+          const mesh = child as THREE.Mesh;
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach((m) => {
+              if (!m) return;
+              if (forceDoubleSide) m.side = THREE.DoubleSide;
+            });
+          } else if (mesh.material && forceDoubleSide) {
+            mesh.material.side = THREE.DoubleSide;
+          }
+        });
+
+        const box = new THREE.Box3().setFromObject(loadedModel as THREE.Object3D);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+
+        if (import.meta.env.DEV) {
+          console.log(
+            `[viewer] loaded size=(${size.x.toFixed(3)}, ${size.y.toFixed(3)}, ${size.z.toFixed(3)}) ` +
+              `center=(${center.x.toFixed(3)}, ${center.y.toFixed(3)}, ${center.z.toFixed(3)})`
+          );
         }
+
+        setModel(loadedModel);
+        onModelReady?.(loadedModel);
       } catch (err) {
-        setError(err instanceof Error ? err.message : '加载模型失败');
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : '加载模型失败');
+          onModelReady?.(null);
+        }
       }
     };
 
     loadModel();
-  }, [url, fileType]);
+    return () => {
+      cancelled = true;
+      onModelReady?.(null);
+    };
+  }, [url, fileType, onModelReady]);
 
   if (error) {
     return (
@@ -193,21 +204,24 @@ function Model({ url, fileType }: { url: string; fileType: string }) {
     );
   }
 
-  if (!model) {
-    return <Loader />;
-  }
+  if (!model) return <Loader />;
+
+  const handlePointerUp = (e: ThreeEvent<PointerEvent>) => {
+    if (!measureEnabled || !onPickPoint) return;
+    if (typeof e.delta === 'number' && e.delta > 3) return;
+    e.stopPropagation();
+    onPickPoint(e.point.clone());
+  };
 
   return (
     <group ref={groupRef}>
-      <primitive object={model} />
+      <primitive object={model} onPointerUp={handlePointerUp} />
     </group>
   );
 }
 
-// 默认展示模型（立方体）
 function DefaultModel() {
   const meshRef = useRef<THREE.Mesh>(null);
-  
   useFrame((state) => {
     if (meshRef.current) {
       meshRef.current.rotation.x = state.clock.elapsedTime * 0.1;
@@ -227,31 +241,234 @@ function DefaultModel() {
   );
 }
 
+function formatDistance(distance: number): string {
+  if (!Number.isFinite(distance)) return '--';
+  if (distance >= 1) return `${distance.toFixed(4)} m`;
+  if (distance >= 0.01) return `${(distance * 100).toFixed(2)} cm`;
+  return `${(distance * 1000).toFixed(1)} mm`;
+}
+
+function MeasurementOverlay({ points, markerRadius }: { points: THREE.Vector3[]; markerRadius: number }) {
+  const linePositions = useMemo(() => {
+    if (points.length !== 2) return null;
+    const [a, b] = points;
+    return new Float32Array([a.x, a.y, a.z, b.x, b.y, b.z]);
+  }, [points]);
+
+  return (
+    <group>
+      {points.map((point, idx) => (
+        <mesh key={`measure-point-${idx}`} position={[point.x, point.y, point.z]}>
+          <sphereGeometry args={[markerRadius, 20, 20]} />
+          <meshBasicMaterial color={idx === 0 ? '#22d3ee' : '#f59e0b'} depthTest={false} />
+        </mesh>
+      ))}
+      {linePositions && (
+        <line>
+          <bufferGeometry>
+            <bufferAttribute attach="attributes-position" args={[linePositions, 3]} />
+          </bufferGeometry>
+          <lineBasicMaterial color="#f59e0b" linewidth={2} />
+        </line>
+      )}
+    </group>
+  );
+}
+
+function percentile(values: number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = (sorted.length - 1) * p;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sorted[lower];
+  const t = index - lower;
+  return sorted[lower] * (1 - t) + sorted[upper] * t;
+}
+
+function getFitBounds(model: THREE.Object3D): FitBoundsResult {
+  const fullBox = new THREE.Box3().setFromObject(model);
+  if (fullBox.isEmpty()) {
+    return { box: fullBox, source: 'full', sampleCount: 0, fullDiag: 0, coreDiag: 0 };
+  }
+
+  const fullSize = fullBox.getSize(new THREE.Vector3());
+  const fullDiag = fullSize.length();
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const zs: number[] = [];
+  const temp = new THREE.Vector3();
+  const SAMPLE_LIMIT_PER_MESH = 3000;
+
+  model.updateWorldMatrix(true, true);
+  model.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) return;
+    const mesh = child as THREE.Mesh;
+    const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
+    if (!geometry) return;
+    const position = geometry.getAttribute('position');
+    if (!position || position.count === 0) return;
+
+    const step = Math.max(1, Math.ceil(position.count / SAMPLE_LIMIT_PER_MESH));
+    for (let i = 0; i < position.count; i += step) {
+      temp.set(position.getX(i), position.getY(i), position.getZ(i));
+      temp.applyMatrix4(mesh.matrixWorld);
+      xs.push(temp.x);
+      ys.push(temp.y);
+      zs.push(temp.z);
+    }
+  });
+
+  if (xs.length < 16) {
+    return { box: fullBox, source: 'full', sampleCount: xs.length, fullDiag, coreDiag: fullDiag };
+  }
+
+  const minX = percentile(xs, 0.02);
+  const maxX = percentile(xs, 0.98);
+  const minY = percentile(ys, 0.02);
+  const maxY = percentile(ys, 0.98);
+  const minZ = percentile(zs, 0.02);
+  const maxZ = percentile(zs, 0.98);
+  if (![minX, maxX, minY, maxY, minZ, maxZ].every(Number.isFinite)) {
+    return { box: fullBox, source: 'full', sampleCount: xs.length, fullDiag, coreDiag: fullDiag };
+  }
+
+  const coreBox = new THREE.Box3(
+    new THREE.Vector3(minX, minY, minZ),
+    new THREE.Vector3(maxX, maxY, maxZ)
+  );
+  const coreSize = coreBox.getSize(new THREE.Vector3());
+  const coreDiag = coreSize.length();
+  if (!Number.isFinite(coreDiag) || coreDiag <= 1e-6) {
+    return { box: fullBox, source: 'full', sampleCount: xs.length, fullDiag, coreDiag: fullDiag };
+  }
+
+  const outlierRatio = fullDiag / coreDiag;
+  const useCore = Number.isFinite(outlierRatio) && outlierRatio > 1.4;
+  return {
+    box: useCore ? coreBox : fullBox,
+    source: useCore ? 'core' : 'full',
+    sampleCount: xs.length,
+    fullDiag,
+    coreDiag,
+  };
+}
+
 export function Model3DViewer({ fileUrl, fileType }: Model3DViewerProps) {
   const [showGrid, setShowGrid] = useState(true);
   const [autoRotate, setAutoRotate] = useState(false);
+  const [measureEnabled, setMeasureEnabled] = useState(false);
+  const [measurePoints, setMeasurePoints] = useState<THREE.Vector3[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [controls, setControls] = useState<any>(null);
+  const [loadedModel, setLoadedModel] = useState<THREE.Group | null>(null);
+
+  const markerRadius = useMemo(() => {
+    if (!loadedModel) return 0.05;
+    const box = new THREE.Box3().setFromObject(loadedModel);
+    if (box.isEmpty()) return 0.05;
+    const diag = box.getSize(new THREE.Vector3()).length();
+    if (!Number.isFinite(diag) || diag <= 0) return 0.05;
+    return THREE.MathUtils.clamp(diag * 0.003, 0.001, 2);
+  }, [loadedModel]);
+
+  const measuredDistance = useMemo(() => {
+    if (measurePoints.length !== 2) return null;
+    return measurePoints[0].distanceTo(measurePoints[1]);
+  }, [measurePoints]);
+
+  const handlePickPoint = useCallback((point: THREE.Vector3) => {
+    setMeasurePoints((prev) => {
+      if (prev.length === 0) return [point];
+      if (prev.length === 1) return [prev[0], point];
+      return [point];
+    });
+  }, []);
+
+  const clearMeasurement = useCallback(() => {
+    setMeasurePoints([]);
+  }, []);
+
+  const toggleMeasurement = useCallback(() => {
+    setMeasureEnabled((prev) => !prev);
+    setMeasurePoints([]);
+  }, []);
+
+  const fitToModel = useCallback(() => {
+    if (!controls || !loadedModel) return;
+
+    const camera = controls.object as THREE.PerspectiveCamera;
+    if (!camera || !camera.isPerspectiveCamera) return;
+
+    const fullBox = new THREE.Box3().setFromObject(loadedModel);
+    if (fullBox.isEmpty()) {
+      console.warn('[viewer] fit skipped: empty bbox');
+      return;
+    }
+
+    const fitBounds = getFitBounds(loadedModel);
+    const box = fitBounds.box;
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const fullSize = fullBox.getSize(new THREE.Vector3());
+    const fullRadius = fullSize.length() * 0.5;
+    const radius = size.length() * 0.5;
+    if (!Number.isFinite(radius) || radius <= 0) {
+      console.warn('[viewer] fit skipped: invalid radius', radius);
+      return;
+    }
+
+    const vFov = THREE.MathUtils.degToRad(camera.fov);
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+    const fitHeightDistance = radius / Math.sin(vFov / 2);
+    const fitWidthDistance = radius / Math.sin(hFov / 2);
+    const distance = Math.max(fitHeightDistance, fitWidthDistance) * 1.2;
+
+    const direction = new THREE.Vector3().subVectors(camera.position, controls.target);
+    if (direction.lengthSq() < 1e-8) direction.set(1, 1, 1);
+    direction.normalize();
+
+    controls.target.copy(center);
+    camera.position.copy(center).addScaledVector(direction, distance);
+    camera.near = Math.max(distance / 1000, 0.01);
+    camera.far = Math.max(distance + fullRadius * 8, 1000);
+    camera.updateProjectionMatrix();
+    controls.update();
+
+    if (import.meta.env.DEV) {
+      console.log(
+        `[viewer] fit distance=${distance.toFixed(3)} ` +
+          `source=${fitBounds.source} samples=${fitBounds.sampleCount} diag(full/core)=${fitBounds.fullDiag.toFixed(3)}/${fitBounds.coreDiag.toFixed(3)} ` +
+          `bbox=(${size.x.toFixed(3)}, ${size.y.toFixed(3)}, ${size.z.toFixed(3)}) ` +
+          `target=(${center.x.toFixed(3)}, ${center.y.toFixed(3)}, ${center.z.toFixed(3)})`
+      );
+    }
+  }, [controls, loadedModel]);
 
   const handleReset = useCallback(() => {
-    if (controls) {
-      controls.reset();
-    }
+    if (controls) controls.reset();
   }, [controls]);
 
+  const handleFitView = useCallback(() => {
+    fitToModel();
+  }, [fitToModel]);
+
   const handleZoomIn = useCallback(() => {
-    if (controls) {
-      controls.dollyIn(1.2);
-    }
+    if (controls) controls.dollyIn(1.2);
   }, [controls]);
 
   const handleZoomOut = useCallback(() => {
-    if (controls) {
-      controls.dollyOut(1.2);
-    }
+    if (controls) controls.dollyOut(1.2);
   }, [controls]);
 
-  // 检测不支持的格式
+  useEffect(() => {
+    if (loadedModel && controls) fitToModel();
+  }, [loadedModel, controls, fitToModel]);
+
+  useEffect(() => {
+    setMeasurePoints([]);
+  }, [fileUrl]);
+
   useEffect(() => {
     if (fileType?.toLowerCase() === 'skp') {
       setError('SKP 是 SketchUp 的专有格式，浏览器无法直接解析。需要转换为 GLTF、GLB、OBJ 或 FBX 格式。');
@@ -262,34 +479,34 @@ export function Model3DViewer({ fileUrl, fileType }: Model3DViewerProps) {
     }
   }, [fileType]);
 
-  // 获取文件类型显示
   const getFileTypeDisplay = () => {
     const type = fileType?.toLowerCase();
     switch (type) {
-      case 'skp': return 'SKP (SketchUp)';
-      case 'gltf': return 'GLTF';
-      case 'glb': return 'GLB (推荐)';
-      case 'obj': return 'OBJ';
-      case 'fbx': return 'FBX';
-      default: return fileType?.toUpperCase() || '';
+      case 'skp':
+        return 'SKP (SketchUp)';
+      case 'gltf':
+        return 'GLTF';
+      case 'glb':
+        return 'GLB (推荐)';
+      case 'obj':
+        return 'OBJ';
+      case 'fbx':
+        return 'FBX';
+      default:
+        return fileType?.toUpperCase() || '';
     }
   };
 
-  // 如果是不支持的格式，显示错误信息
   if (error) {
     return (
       <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden">
-        {/* 工具栏 */}
         <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-300">3D 模型查看器</span>
-            {fileType && (
-              <span className="text-xs text-gray-500">({getFileTypeDisplay()})</span>
-            )}
+            {fileType && <span className="text-xs text-gray-500">({getFileTypeDisplay()})</span>}
           </div>
         </div>
 
-        {/* 错误内容 */}
         <div className="flex-1 flex flex-col items-center justify-center p-8">
           <div className="text-center max-w-lg">
             {fileType?.toLowerCase() === 'skp' ? (
@@ -302,31 +519,6 @@ export function Model3DViewer({ fileUrl, fileType }: Model3DViewerProps) {
                     SKP 是 SketchUp 的专有二进制格式，浏览器无法直接解析。
                   </AlertDescription>
                 </Alert>
-                
-                <div className="space-y-4 text-left">
-                  <div className="p-4 bg-gray-800 rounded-lg">
-                    <h4 className="text-sm font-medium text-blue-400 mb-3">方案一：启用后端转换服务</h4>
-                    <p className="text-xs text-gray-400 mb-2">如果有配置好的后端服务，SKP 文件将自动转换为 GLB 格式。</p>
-                    <code className="text-xs bg-gray-900 p-2 rounded block">
-                      docker-compose up -d
-                    </code>
-                  </div>
-                  
-                  <div className="p-4 bg-gray-800 rounded-lg">
-                    <h4 className="text-sm font-medium text-green-400 mb-3">方案二：手动转换</h4>
-                    <ol className="text-xs text-gray-400 space-y-1 list-decimal list-inside">
-                      <li>在 SketchUp 中打开您的模型</li>
-                      <li>安装 glTF 导出插件（如 Khronos Group 插件）</li>
-                      <li>选择 文件 → 导出 → 3D模型，选择 GLTF/GLB 格式</li>
-                      <li>将导出的文件重新上传</li>
-                    </ol>
-                  </div>
-
-                  <div className="p-4 bg-gray-800 rounded-lg">
-                    <h4 className="text-sm font-medium text-purple-400 mb-3">方案三：使用在线转换工具</h4>
-                    <p className="text-xs text-gray-400">使用在线转换服务将 SKP 转换为 GLB/GLTF 后上传</p>
-                  </div>
-                </div>
               </>
             ) : (
               <>
@@ -342,13 +534,10 @@ export function Model3DViewer({ fileUrl, fileType }: Model3DViewerProps) {
 
   return (
     <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden">
-      {/* 工具栏 */}
       <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-gray-300">3D 模型查看器</span>
-          {fileUrl && fileType && (
-            <span className="text-xs text-gray-500">({getFileTypeDisplay()})</span>
-          )}
+          {fileUrl && fileType && <span className="text-xs text-gray-500">({getFileTypeDisplay()})</span>}
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -370,46 +559,52 @@ export function Model3DViewer({ fileUrl, fileType }: Model3DViewerProps) {
             <RotateCcw className="h-4 w-4" />
           </Button>
           <div className="w-px h-6 bg-gray-600 mx-1" />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleZoomIn}
-            className="h-8 w-8 text-gray-400 hover:text-white"
-            title="放大"
-          >
+          <Button variant="ghost" size="icon" onClick={handleZoomIn} className="h-8 w-8 text-gray-400 hover:text-white" title="放大">
             <ZoomIn className="h-4 w-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleZoomOut}
-            className="h-8 w-8 text-gray-400 hover:text-white"
-            title="缩小"
-          >
+          <Button variant="ghost" size="icon" onClick={handleZoomOut} className="h-8 w-8 text-gray-400 hover:text-white" title="缩小">
             <ZoomOut className="h-4 w-4" />
           </Button>
+          <Button variant="ghost" size="icon" onClick={handleReset} className="h-8 w-8 text-gray-400 hover:text-white" title="重置视图">
+            <Maximize className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={handleFitView} className="h-8 w-8 text-gray-400 hover:text-white" title="适配视图">
+            <span className="text-[10px] font-semibold">FIT</span>
+          </Button>
+          <div className="w-px h-6 bg-gray-600 mx-1" />
           <Button
             variant="ghost"
             size="icon"
-            onClick={handleReset}
-            className="h-8 w-8 text-gray-400 hover:text-white"
-            title="重置视图"
+            onClick={toggleMeasurement}
+            className={`h-8 w-8 ${measureEnabled ? 'text-emerald-400' : 'text-gray-400 hover:text-white'}`}
+            title="测量模式"
           >
-            <Maximize className="h-4 w-4" />
+            <Ruler className="h-4 w-4" />
           </Button>
+          {measureEnabled && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={clearMeasurement}
+              className="h-8 w-8 text-gray-400 hover:text-white"
+              title="清除测量"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* 3D Canvas */}
       <div className="flex-1 relative">
         <Canvas camera={{ position: [8, 8, 6], up: [0, 0, 1], fov: 50 }}>
           <ambientLight intensity={0.8} />
           <directionalLight position={[10, 10, 10]} intensity={1.5} />
           <directionalLight position={[-5, -5, 5]} intensity={0.5} />
-          
+
           {showGrid && (
             <Grid
               args={[20, 20]}
+              rotation-x={Math.PI / 2}
               cellSize={1}
               cellThickness={0.5}
               cellColor="#444444"
@@ -420,31 +615,42 @@ export function Model3DViewer({ fileUrl, fileType }: Model3DViewerProps) {
             />
           )}
 
-          {/* 坐标轴 */}
           <AxesHelper size={10} />
 
           <Suspense fallback={<Loader />}>
             {fileUrl && fileType ? (
-              <Model url={fileUrl} fileType={fileType} />
+              <Model
+                url={fileUrl}
+                fileType={fileType}
+                onModelReady={setLoadedModel}
+                measureEnabled={measureEnabled}
+                onPickPoint={handlePickPoint}
+              />
             ) : (
               <DefaultModel />
             )}
           </Suspense>
 
+          {measureEnabled && measurePoints.length > 0 && <MeasurementOverlay points={measurePoints} markerRadius={markerRadius} />}
+
           <ControlsHelper setControls={setControls} autoRotate={autoRotate} />
-          
-          {/* Environment 组件可能导致加载问题，暂时禁用 */}
-          {/* <Environment preset="city" /> */}
         </Canvas>
 
-        {/* 操作提示 */}
-        {!fileUrl && (
-          <div className="absolute bottom-4 left-4 bg-gray-800/80 backdrop-blur-sm rounded-lg px-4 py-2 text-sm text-gray-400">
-            <p>🖱️ 左键拖动旋转 | 右键拖动平移 | 滚轮缩放</p>
+        {measureEnabled && (
+          <div className="absolute top-4 left-4 bg-gray-900/85 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200">
+            <p className="text-emerald-300 font-medium">测量模式：点击模型选择两点</p>
+            <p className="mt-1">
+              {measuredDistance !== null ? `当前距离: ${formatDistance(measuredDistance)}` : `已选点数: ${measurePoints.length}/2`}
+            </p>
           </div>
         )}
 
-        {/* 格式支持提示 */}
+        {!fileUrl && (
+          <div className="absolute bottom-4 left-4 bg-gray-800/80 backdrop-blur-sm rounded-lg px-4 py-2 text-sm text-gray-400">
+            <p>左键拖动旋转 | 右键拖动平移 | 滚轮缩放</p>
+          </div>
+        )}
+
         {!fileUrl && (
           <div className="absolute top-4 right-4 bg-gray-800/80 backdrop-blur-sm rounded-lg px-4 py-2 text-xs text-gray-400">
             <p className="font-medium text-gray-300 mb-1">支持的格式：</p>
