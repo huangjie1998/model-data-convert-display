@@ -22,7 +22,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码
-COPY app_full.py app.py
+COPY app.py app_skp_api.py dwg_service_core.py ./
 
 # 创建上传和转换目录
 RUN mkdir -p uploads converted

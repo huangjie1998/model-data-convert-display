@@ -42,6 +42,7 @@ interface UploadedFile {
   url: string;
   type: string;
   originalType: string;
+  rawFile: File;
   category: '3d' | '2d';
   uploadTime: Date;
   converted: boolean;
@@ -93,6 +94,7 @@ function App() {
       url,
       type,
       originalType,
+      rawFile: file,
       category: '3d',
       uploadTime: new Date(),
       converted: originalType !== type
@@ -109,6 +111,7 @@ function App() {
       url,
       type,
       originalType,
+      rawFile: file,
       category: '2d',
       uploadTime: new Date(),
       converted: originalType !== type
@@ -473,6 +476,7 @@ function App() {
                           fileUrl={current2DFile?.url || null}
                           fileType={current2DFile?.type || null}
                           fileName={current2DFile?.name}
+                          rawFile={current2DFile?.rawFile || null}
                         />
                       </ErrorBoundary>
                     </div>

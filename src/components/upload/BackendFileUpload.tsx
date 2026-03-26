@@ -1,15 +1,16 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, File, X, AlertCircle, CheckCircle2, Loader2, ArrowRight, Server, AlertTriangle } from 'lucide-react';
+import { Upload, File, X, CheckCircle2, Loader2, ArrowRight, Server, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { 
-  uploadAndConvert, 
-  getConvertedFileUrl, 
+import {
+  uploadAndConvert,
+  getConvertedFileUrl,
   isBackendAvailable,
-  type ConversionResult 
+  isDwgDirectAvailable,
+  type ConversionResult,
 } from '@/services/converterApi';
 
 interface BackendFileUploadProps {
@@ -34,250 +35,253 @@ const formatFileSize = (bytes: number): string => {
   const k = 1024;
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 };
 
-export function BackendFileUpload({ 
-  onFileConverted, 
-  acceptedFormats, 
-  title, 
+const formatLabelMap: Record<string, string> = {
+  skp: 'SKP',
+  dwg: 'DWG',
+  dxf: 'DXF',
+  pdf: 'PDF',
+  gltf: 'GLTF',
+  glb: 'GLB',
+  obj: 'OBJ',
+  fbx: 'FBX',
+  png: 'PNG',
+  jpg: 'JPG',
+  jpeg: 'JPEG',
+};
+
+function buildDropzoneAccept(formats: string[]): Record<string, string[]> {
+  const accept: Record<string, string[]> = {};
+  const add = (mime: string, ext: string) => {
+    if (!accept[mime]) accept[mime] = [];
+    if (!accept[mime].includes(ext)) accept[mime].push(ext);
+  };
+
+  for (const rawFormat of formats) {
+    const format = rawFormat.toLowerCase();
+    switch (format) {
+      case 'gltf':
+        add('model/gltf+json', '.gltf');
+        break;
+      case 'glb':
+        add('model/gltf-binary', '.glb');
+        break;
+      case 'pdf':
+        add('application/pdf', '.pdf');
+        break;
+      case 'png':
+        add('image/png', '.png');
+        break;
+      case 'jpg':
+      case 'jpeg':
+        add('image/jpeg', '.jpg');
+        add('image/jpeg', '.jpeg');
+        break;
+      default:
+        add('application/octet-stream', `.${format}`);
+        break;
+    }
+  }
+
+  return accept;
+}
+
+export function BackendFileUpload({
+  onFileConverted,
+  acceptedFormats,
+  title,
   description,
-  onSwitchToConverter
+  onSwitchToConverter,
 }: BackendFileUploadProps) {
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [backendAvailable, setBackendAvailable] = useState<boolean | null>(null);
+  const [dwgServiceAvailable, setDwgServiceAvailable] = useState<boolean | null>(null);
   const [useBackend, setUseBackend] = useState(true);
 
-  // 检查后端服务状态
+  const supportsSkp = acceptedFormats.includes('skp');
+  const supportsDwg = acceptedFormats.includes('dwg');
+
   useEffect(() => {
-    const checkBackend = async () => {
-      const available = await isBackendAvailable();
-      setBackendAvailable(available);
-      if (!available) {
+    let mounted = true;
+    const checkServices = async () => {
+      const [converterAvailable, dwgAvailable] = await Promise.all([
+        isBackendAvailable(),
+        isDwgDirectAvailable(),
+      ]);
+      if (!mounted) return;
+      setBackendAvailable(converterAvailable);
+      setDwgServiceAvailable(dwgAvailable);
+      if (!converterAvailable) {
         setUseBackend(false);
       }
     };
-    checkBackend();
+
+    checkServices();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  const getAcceptedTypes = () => {
-    const types: { [key: string]: string[] } = {
-      'skp': ['.skp'],
-      'dwg': ['.dwg'],
-      'dxf': ['.dxf'],
-      'pdf': ['.pdf'],
-      'gltf': ['.gltf', '.glb'],
-      'obj': ['.obj'],
-      'fbx': ['.fbx'],
-      'png': ['.png'],
-      'jpg': ['.jpg', '.jpeg'],
-    };
-
-    const accepted: { [key: string]: string[] } = {};
-    acceptedFormats.forEach(format => {
-      if (types[format]) {
-        types[format].forEach(ext => {
-          accepted[ext] = [];
-        });
-      }
-    });
-    return accepted;
+  const updateUploadingFile = (uploadId: string, updater: (f: UploadingFile) => UploadingFile) => {
+    setUploadingFiles((prev) => prev.map((f) => (f.id === uploadId ? updater(f) : f)));
   };
 
   const processFile = async (file: File, uploadId: string) => {
     const extension = file.name.split('.').pop()?.toLowerCase() || '';
-    
-    // 检查是否需要后端转换
-    const needsBackendConversion = ['skp', 'dwg'].includes(extension);
-    
-    if (useBackend && backendAvailable && needsBackendConversion) {
-      // 使用后端转换
+    const isDwgDirect = extension === 'dwg';
+    const needsBackendConversion = extension === 'skp';
+
+    let converterAvailable = backendAvailable;
+    if (needsBackendConversion && converterAvailable === null) {
+      converterAvailable = await isBackendAvailable();
+      setBackendAvailable(converterAvailable);
+      if (!converterAvailable) {
+        setUseBackend(false);
+      }
+    }
+
+    if (isDwgDirect) {
+      let dwgAvailable = dwgServiceAvailable;
+      if (dwgAvailable === null) {
+        dwgAvailable = await isDwgDirectAvailable();
+        setDwgServiceAvailable(dwgAvailable);
+      }
+
+      if (!dwgAvailable) {
+        updateUploadingFile(uploadId, (f) => ({
+          ...f,
+          status: 'error',
+          progress: 100,
+          error: 'DWG direct service is offline. Start backend and ensure /api/dwg/health is reachable.',
+        }));
+        return;
+      }
+    }
+
+    if (useBackend && converterAvailable && needsBackendConversion) {
       try {
-        setUploadingFiles(prev => prev.map(f => 
-          f.id === uploadId 
-            ? { ...f, status: 'uploading', progress: 10 }
-            : f
-        ));
+        updateUploadingFile(uploadId, (f) => ({ ...f, status: 'uploading', progress: 10 }));
 
         const result = await uploadAndConvert(file);
-        
-        setUploadingFiles(prev => prev.map(f => 
-          f.id === uploadId 
-            ? { ...f, status: 'converting', progress: 50, result }
-            : f
-        ));
 
-        // 模拟转换进度
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        setUploadingFiles(prev => prev.map(f => 
-          f.id === uploadId 
-            ? { ...f, status: 'completed', progress: 100, result }
-            : f
-        ));
+        updateUploadingFile(uploadId, (f) => ({ ...f, status: 'converting', progress: 50, result }));
 
-        // 检查转换是否成功
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        updateUploadingFile(uploadId, (f) => ({ ...f, status: 'completed', progress: 100, result }));
+
         if (result.converted && result.download_url) {
           const convertedUrl = getConvertedFileUrl(result.download_url);
           const convertedType = result.converted_type || extension;
-          
-          // 获取转换后的文件
           const response = await fetch(convertedUrl);
           const blob = await response.blob();
           const url = URL.createObjectURL(blob);
-          
           onFileConverted(file, url, convertedType, extension);
-        } else if (result.conversion_error) {
-          // 转换失败，显示错误
-          setUploadingFiles(prev => prev.map(f => 
-            f.id === uploadId 
-              ? { 
-                  ...f, 
-                  status: 'needs_manual', 
-                  progress: 100,
-                  error: result.conversion_error 
-                }
-              : f
-          ));
-          
-          // 仍然传递原始文件（虽然无法查看）
+          return;
+        }
+
+        if (result.conversion_error) {
+          updateUploadingFile(uploadId, (f) => ({
+            ...f,
+            status: 'needs_manual',
+            progress: 100,
+            error: result.conversion_error,
+          }));
           const url = URL.createObjectURL(file);
           onFileConverted(file, url, extension, extension);
-        } else if (result.download_url) {
-          // 未转换但可下载原始文件
+          return;
+        }
+
+        if (result.download_url) {
           const convertedUrl = getConvertedFileUrl(result.download_url);
           const response = await fetch(convertedUrl);
           const blob = await response.blob();
           const url = URL.createObjectURL(blob);
-          
           onFileConverted(file, url, extension, extension);
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : '转换失败';
-        setUploadingFiles(prev => prev.map(f => 
-          f.id === uploadId 
-            ? { 
-                ...f, 
-                status: 'error', 
-                error: errorMessage 
-              }
-            : f
-        ));
+        const errorMessage = error instanceof Error ? error.message : 'Conversion failed.';
+        updateUploadingFile(uploadId, (f) => ({ ...f, status: 'error', error: errorMessage }));
       }
-    } else if (needsBackendConversion) {
-      // 需要转换但后端不可用
-      setUploadingFiles(prev => prev.map(f => 
-        f.id === uploadId 
-          ? { 
-              ...f, 
-              status: 'needs_manual', 
-              progress: 100,
-              error: '后端转换服务未运行，请手动转换后上传'
-            }
-          : f
-      ));
-      
-      // 仍然本地处理，但标记为需要手动转换
+      return;
+    }
+
+    if (needsBackendConversion) {
+      updateUploadingFile(uploadId, (f) => ({
+        ...f,
+        status: 'needs_manual',
+        progress: 100,
+        error: 'SKP auto-conversion service is offline. Convert to GLB manually first.',
+      }));
       const url = URL.createObjectURL(file);
       onFileConverted(file, url, extension, extension);
-    } else {
-      // 本地处理，不需要转换
-      setUploadingFiles(prev => prev.map(f => 
-        f.id === uploadId 
-          ? { ...f, status: 'uploading', progress: 10 }
-          : f
-      ));
-
-      // 模拟上传进度
-      let progress = 10;
-      const progressInterval = setInterval(() => {
-        progress += Math.random() * 25;
-        if (progress >= 100) {
-          progress = 100;
-          clearInterval(progressInterval);
-          
-          // 更新状态为完成
-          setUploadingFiles(prev => prev.map(f => 
-            f.id === uploadId 
-              ? { ...f, status: 'completed', progress: 100 }
-              : f
-          ));
-          
-          // 通知父组件
-          const url = URL.createObjectURL(file);
-          onFileConverted(file, url, extension, extension);
-        } else {
-          setUploadingFiles(prev => prev.map(f => 
-            f.id === uploadId 
-              ? { ...f, progress }
-              : f
-          ));
-        }
-      }, 150);
+      return;
     }
+
+    updateUploadingFile(uploadId, (f) => ({ ...f, status: 'uploading', progress: 10 }));
+
+    let progress = 10;
+    const progressInterval = setInterval(() => {
+      progress += Math.random() * 25;
+      if (progress >= 100) {
+        progress = 100;
+        clearInterval(progressInterval);
+
+        updateUploadingFile(uploadId, (f) => ({ ...f, status: 'completed', progress: 100 }));
+
+        const url = URL.createObjectURL(file);
+        onFileConverted(file, url, extension, extension);
+      } else {
+        updateUploadingFile(uploadId, (f) => ({ ...f, progress }));
+      }
+    }, 150);
   };
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    acceptedFiles.forEach(file => {
-      const id = Math.random().toString(36).substring(7);
-      
-      const uploadingFile: UploadingFile = {
-        file,
-        id,
-        progress: 0,
-        status: 'uploading'
-      };
-      
-      setUploadingFiles(prev => [...prev, uploadingFile]);
-      
-      // 开始处理
-      processFile(file, id);
-    });
-  }, [useBackend, backendAvailable, onFileConverted]);
+  const onDrop = useCallback(
+    (acceptedFiles: File[]) => {
+      acceptedFiles.forEach((file) => {
+        const id = Math.random().toString(36).substring(7);
+
+        const uploadingFile: UploadingFile = {
+          file,
+          id,
+          progress: 0,
+          status: 'uploading',
+        };
+
+        setUploadingFiles((prev) => [...prev, uploadingFile]);
+        processFile(file, id);
+      });
+    },
+    [useBackend, backendAvailable, dwgServiceAvailable, onFileConverted]
+  );
+
+  const dropzoneAccept = useMemo(() => buildDropzoneAccept(acceptedFormats), [acceptedFormats]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: {
-      'model/gltf+json': ['.gltf'],
-      'model/gltf-binary': ['.glb'],
-      'application/octet-stream': ['.skp', '.obj', '.fbx', '.dwg', '.dxf'],
-    },
-    multiple: false
+    accept: dropzoneAccept,
+    multiple: false,
   });
 
   const removeFile = (id: string) => {
-    setUploadingFiles(prev => prev.filter(f => f.id !== id));
-  };
-
-  const getFormatIcon = (format: string) => {
-    const iconMap: { [key: string]: string } = {
-      'skp': '📐',
-      'dwg': '📏',
-      'dxf': '📋',
-      'pdf': '📄',
-      'gltf': '🎨',
-      'glb': '🎨',
-      'obj': '🔷',
-      'fbx': '📦',
-      'png': '🖼️',
-      'jpg': '🖼️',
-      'jpeg': '🖼️',
-    };
-    return iconMap[format] || '📎';
+    setUploadingFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
   const getStatusBadge = (file: UploadingFile) => {
     switch (file.status) {
       case 'uploading':
-        return <Badge variant="secondary" className="bg-blue-900/50 text-blue-400">上传中</Badge>;
+        return <Badge variant="secondary" className="bg-blue-900/50 text-blue-400">Uploading</Badge>;
       case 'converting':
-        return <Badge variant="secondary" className="bg-amber-900/50 text-amber-400">转换中</Badge>;
+        return <Badge variant="secondary" className="bg-amber-900/50 text-amber-400">Converting</Badge>;
       case 'completed':
-        return <Badge variant="secondary" className="bg-green-900/50 text-green-400">完成</Badge>;
+        return <Badge variant="secondary" className="bg-green-900/50 text-green-400">Completed</Badge>;
       case 'needs_manual':
-        return <Badge variant="secondary" className="bg-orange-900/50 text-orange-400">需手动转换</Badge>;
+        return <Badge variant="secondary" className="bg-orange-900/50 text-orange-400">Manual Step</Badge>;
       case 'error':
-        return <Badge variant="destructive">失败</Badge>;
+        return <Badge variant="destructive">Failed</Badge>;
       default:
         return null;
     }
@@ -285,109 +289,100 @@ export function BackendFileUpload({
 
   return (
     <div className="space-y-4">
-      {/* 后端状态提示 */}
-      {backendAvailable === false && (
+      {supportsSkp && backendAvailable === false && (
         <Alert className="bg-amber-900/20 border-amber-800">
           <AlertTriangle className="h-4 w-4 text-amber-500" />
           <AlertDescription className="text-amber-400 text-sm">
-            后端转换服务未运行。SKP 和 DWG 文件需要手动转换后上传。
+            SKP auto-conversion service is offline. Upload GLB directly or convert SKP manually.
             {onSwitchToConverter && (
-              <button 
-                onClick={onSwitchToConverter}
-                className="underline ml-1 hover:text-amber-300"
-              >
-                查看转换指南
+              <button onClick={onSwitchToConverter} className="underline ml-1 hover:text-amber-300">
+                View guide
               </button>
             )}
           </AlertDescription>
         </Alert>
       )}
 
-      {/* 后端转换开关 */}
+      {supportsDwg && dwgServiceAvailable === false && (
+        <Alert className="bg-red-900/20 border-red-800">
+          <AlertTriangle className="h-4 w-4 text-red-500" />
+          <AlertDescription className="text-red-300 text-sm">
+            DWG direct-view service is offline. Start backend and ensure /api/dwg/health is reachable.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg">
         <div className="flex items-center gap-2">
           <Server className="h-4 w-4 text-blue-400" />
-          <span className="text-sm text-gray-300">自动格式转换</span>
-          {backendAvailable === false && (
+          <span className="text-sm text-gray-300">Upload Service</span>
+          {supportsSkp && backendAvailable === false && (
             <Badge variant="secondary" className="bg-red-900/50 text-red-400 text-xs">
-              离线
+              SKP convert offline
+            </Badge>
+          )}
+          {supportsDwg && dwgServiceAvailable === false && (
+            <Badge variant="secondary" className="bg-red-900/50 text-red-400 text-xs">
+              DWG direct offline
             </Badge>
           )}
         </div>
         <Button
-          variant={useBackend && backendAvailable ? 'default' : 'outline'}
+          variant={supportsSkp && useBackend && backendAvailable ? 'default' : 'outline'}
           size="sm"
           onClick={() => setUseBackend(!useBackend)}
-          disabled={!backendAvailable}
-          className={useBackend && backendAvailable ? 'bg-blue-600 hover:bg-blue-700' : 'border-gray-600'}
+          disabled={!supportsSkp || !backendAvailable}
+          className={supportsSkp && useBackend && backendAvailable ? 'bg-blue-600 hover:bg-blue-700' : 'border-gray-600'}
         >
-          {useBackend && backendAvailable ? '已启用' : '已禁用'}
+          {supportsSkp
+            ? (useBackend && backendAvailable ? 'SKP Auto-Convert ON' : 'SKP Auto-Convert OFF')
+            : 'SKP Only'}
         </Button>
       </div>
 
-      {/* 上传区域 */}
       <div
         {...getRootProps()}
         className={`
           relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer
           transition-all duration-200 ease-in-out
-          ${isDragActive 
-            ? 'border-blue-500 bg-blue-500/10' 
-            : 'border-gray-600 hover:border-gray-500 hover:bg-gray-800/50'
-          }
+          ${isDragActive ? 'border-blue-500 bg-blue-500/10' : 'border-gray-600 hover:border-gray-500 hover:bg-gray-800/50'}
         `}
       >
         <input {...getInputProps()} />
-        
+
         <div className="flex flex-col items-center gap-3">
-          <div className={`
-            p-4 rounded-full transition-all duration-200
-            ${isDragActive ? 'bg-blue-500/20' : 'bg-gray-800'}
-          `}>
-            <Upload className={`
-              h-8 w-8 transition-colors
-              ${isDragActive ? 'text-blue-400' : 'text-gray-400'}
-            `} />
+          <div className={`p-4 rounded-full transition-all duration-200 ${isDragActive ? 'bg-blue-500/20' : 'bg-gray-800'}`}>
+            <Upload className={`h-8 w-8 transition-colors ${isDragActive ? 'text-blue-400' : 'text-gray-400'}`} />
           </div>
-          
+
           <div>
-            <p className="text-lg font-medium text-gray-200">
-              {isDragActive ? '释放文件以上传' : title}
-            </p>
+            <p className="text-lg font-medium text-gray-200">{isDragActive ? 'Drop file to upload' : title}</p>
             <p className="text-sm text-gray-500 mt-1">{description}</p>
-            {backendAvailable !== false && (
-              <p className="text-xs text-blue-400 mt-2">
-                SKP 和 DWG 文件将自动转换
-              </p>
+            {supportsSkp && backendAvailable !== false && (
+              <p className="text-xs text-blue-400 mt-2">SKP files will be auto-converted to GLB.</p>
+            )}
+            {supportsDwg && dwgServiceAvailable !== false && (
+              <p className="text-xs text-cyan-400 mt-2">DWG files are opened by direct CAD parsing (no DXF/PDF conversion).</p>
             )}
           </div>
 
-          {/* 支持的格式标签 */}
           <div className="flex flex-wrap justify-center gap-2 mt-2">
-            {acceptedFormats.map(format => (
-              <span 
+            {acceptedFormats.map((format) => (
+              <span
                 key={format}
                 className="inline-flex items-center gap-1 px-2 py-1 bg-gray-800 rounded text-xs text-gray-400"
               >
-                <span>{getFormatIcon(format)}</span>
-                <span className="uppercase">{format}</span>
+                <span>{formatLabelMap[format] || format.toUpperCase()}</span>
               </span>
             ))}
           </div>
         </div>
       </div>
 
-      {/* 文件拒绝提示 */}
-      {/* 由于接受所有文件类型，不再显示拒绝提示 */}
-
-      {/* 上传文件列表 */}
       {uploadingFiles.length > 0 && (
         <div className="space-y-2">
-          {uploadingFiles.map(uploadingFile => (
-            <div 
-              key={uploadingFile.id}
-              className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg"
-            >
+          {uploadingFiles.map((uploadingFile) => (
+            <div key={uploadingFile.id} className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg">
               <div className="p-2 bg-gray-700 rounded">
                 {uploadingFile.status === 'converting' ? (
                   <Loader2 className="h-5 w-5 text-amber-400 animate-spin" />
@@ -397,47 +392,36 @@ export function BackendFileUpload({
                   <File className="h-5 w-5 text-gray-400" />
                 )}
               </div>
-              
+
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-gray-200 truncate">
-                    {uploadingFile.file.name}
-                  </p>
+                  <p className="text-sm font-medium text-gray-200 truncate">{uploadingFile.file.name}</p>
                   {getStatusBadge(uploadingFile)}
                 </div>
                 <p className="text-xs text-gray-500">
                   {formatFileSize(uploadingFile.file.size)}
                   {uploadingFile.result?.needs_conversion && uploadingFile.status === 'completed' && (
                     <span className="ml-2 text-amber-400">
-                      {uploadingFile.result.original_type.toUpperCase()} 
+                      {uploadingFile.result.original_type.toUpperCase()}
                       <ArrowRight className="inline h-3 w-3 mx-1" />
                       {uploadingFile.result.converted_type?.toUpperCase()}
                     </span>
                   )}
                 </p>
-                
+
                 {uploadingFile.status !== 'completed' && uploadingFile.status !== 'error' && uploadingFile.status !== 'needs_manual' && (
-                  <Progress 
-                    value={uploadingFile.progress} 
-                    className="h-1 mt-2"
-                  />
-                )}
-                
-                {uploadingFile.error && (
-                  <p className="text-xs text-red-400 mt-1">{uploadingFile.error}</p>
+                  <Progress value={uploadingFile.progress} className="h-1 mt-2" />
                 )}
 
+                {uploadingFile.error && <p className="text-xs text-red-400 mt-1">{uploadingFile.error}</p>}
+
                 {uploadingFile.status === 'needs_manual' && (
-                  <p className="text-xs text-orange-400 mt-1">
-                    请先将文件转换为支持的格式后再上传
-                  </p>
+                  <p className="text-xs text-orange-400 mt-1">Please convert the file to a supported target format, then upload again.</p>
                 )}
               </div>
 
               <div className="flex items-center gap-2">
-                {uploadingFile.status === 'completed' && (
-                  <CheckCircle2 className="h-5 w-5 text-green-500" />
-                )}
+                {uploadingFile.status === 'completed' && <CheckCircle2 className="h-5 w-5 text-green-500" />}
                 <Button
                   variant="ghost"
                   size="icon"

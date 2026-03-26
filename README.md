@@ -237,3 +237,36 @@ MIT License
 - [Three.js](https://threejs.org/) - 3D 渲染引擎
 - [Open Design Alliance](https://www.opendesign.com/) - DWG/DXF 技术支持
 - [shadcn/ui](https://ui.shadcn.com/) - UI 组件库
+
+## ODA Runtime (Project-Managed)
+
+This project now supports a project-managed ODA runtime under:
+
+- `server/vendor/oda/win-x64/2026.03.25-v1/bin`
+- `server/vendor/oda/win-x64/2026.03.25-v1/manifest.json`
+
+Sync runtime files from local ODA install:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\sync-oda-runtime.ps1 -Clean
+```
+
+Backend runtime resolution priority:
+
+1. `ODA_READ_EXE`
+2. `ODA_RUNTIME_ROOT`
+3. project vendor: `server/vendor/oda/<profile>/<version>/bin/OdReadEx(.exe)`
+4. system PATH / fallback
+
+Health check:
+
+```bash
+curl http://localhost:5000/api/dwg/health
+```
+
+Expected fields include:
+
+- `mode: oda_cli`
+- `oda_runtime_in_project: true`
+- `oda_profile: win-x64`
+- `oda_version: 2026.03.25-v1`

@@ -1,0 +1,1306 @@
+﻿{
+    "profile":  "win-x64",
+    "version":  "2026.03.25-v1",
+    "generated_at":  "2026-03-26T14:12:22.5370244+08:00",
+    "source_root":  "C:\\development\\oda\\ConvertApp\\lib\\ODA",
+    "target_root":  "C:\\development\\模型数据转换显示\\server\\vendor\\oda\\win-x64\\2026.03.25-v1",
+    "runtime_entry":  "bin/OdReadEx.exe",
+    "file_count":  259,
+    "files":  [
+                  {
+                      "sha256":  "ca9468dec3360885950130251a1d15dd6fe051796837a9036611e686a783a6f5",
+                      "name":  "ACCAMERA_23.2_14.tx",
+                      "size":  95104
+                  },
+                  {
+                      "sha256":  "e1c13ac4783d0491f7b351cd3fdf71e9bf7325619802ee5bd3749b1e3a0c1c77",
+                      "name":  "AcDbPointCloudObj_23.2_14.tx",
+                      "size":  273792
+                  },
+                  {
+                      "sha256":  "b07385572dade0115d2ce60152dc09cdde3e1a300a9e48fcac2fa1eaa16e844a",
+                      "name":  "AcDgnLS_23.2_14.tx",
+                      "size":  133504
+                  },
+                  {
+                      "sha256":  "e7bca2f86b9a95305549a1a1f57b2c0dd765d19fdd1e75bfae3fb9865014fcba",
+                      "name":  "AcGeolocationObj_23.2_14.tx",
+                      "size":  126848
+                  },
+                  {
+                      "sha256":  "3228a8b42e4d204da8f83e6777d57af86e9321fe18bce1f209ef04be3537f277",
+                      "name":  "AcIdViewObj_23.2_14.tx",
+                      "size":  140160
+                  },
+                  {
+                      "sha256":  "8f066e76679ca68a8f4abb0ca54ba6834141a9027b5c8ef0b744675911f19cf2",
+                      "name":  "AcModelDocObj_23.2_14.tx",
+                      "size":  647040
+                  },
+                  {
+                      "sha256":  "a57bc64c54143b0a8edb0e7b133071ff199e41504938ecf7f14523ec30efca2c",
+                      "name":  "AcMPolygonObj15_23.2_14.tx",
+                      "size":  216960
+                  },
+                  {
+                      "sha256":  "c1aaa84680e0c5a4c2af8b8acb88a1e94c330cf272ec31239190473bd5da6a03",
+                      "name":  "AECIIB_23.2_14.tx",
+                      "size":  87936
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ArcAlignedTextEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "e79d7f85c05cc5c6939cc882bf100d4ec1ba0b6417746b9b937197c490146fb0",
+                      "name":  "AsdkSmileyDb_23.2_14.tx",
+                      "size":  84864
+                  },
+                  {
+                      "sha256":  "8f65356d6803ce643f2a19d1850ab36b7110abc22825551c299a6065bd66ae9f",
+                      "name":  "ATEXT_23.2_14.tx",
+                      "size":  108928
+                  },
+                  {
+                      "sha256":  "e794e539c5f2a738c69e3d64feae3e9ec8641ed4462d0f25fe0678e6784c3f5d",
+                      "name":  "AutoSurfServices_23.2_14.tx",
+                      "size":  96640
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "BlockEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "f4b56cc0b000a72a0dc9b4862e8592e5eccf818473b051792d587d69804c3f7d",
+                      "name":  "COLLADABaseUtils.dll",
+                      "size":  172416
+                  },
+                  {
+                      "sha256":  "48e42c95c362e7ccaf77f2bc17be458c48d57440da2c8e9ecb1dbacc43368189",
+                      "name":  "COLLADAFramework.dll",
+                      "size":  298880
+                  },
+                  {
+                      "sha256":  "c21ed82fd492412c85e9a69fd77ac2e2e857147cd272f92e25269a31c044824d",
+                      "name":  "COLLADASaxFrameworkLoader.dll",
+                      "size":  7851392
+                  },
+                  {
+                      "sha256":  "029742932534b6c2bec9a0394f5aee4c269a7acc785bf4aef90fa900359fdfca",
+                      "name":  "COLLADAStreamWriter.dll",
+                      "size":  458112
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "CRT.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "135ba1297bbba12345a808f4a616f68bd9e80c1b0c8354fd96dd42c2f0819a62",
+                      "name":  "curl.dll",
+                      "size":  441728
+                  },
+                  {
+                      "sha256":  "e139f8378f485b2e2977f33f05082ae650125108dc047793ac309e45a97b6e62",
+                      "name":  "DbCommands_23.2_14.tx",
+                      "size":  289664
+                  },
+                  {
+                      "sha256":  "5cc3301e4c3bd1d5f0b47a676bbf31e4bf93b286f106307e0d0cc7a0ef4d79b9",
+                      "name":  "DbConstraints_23.2_14.tx",
+                      "size":  2466688
+                  },
+                  {
+                      "sha256":  "2810c7e6ca8362ea4b9c21ce418d867824e3762d28b6cdd2a9402cdb9199247f",
+                      "name":  "DbCryptModule_23.2_14.tx",
+                      "size":  41856
+                  },
+                  {
+                      "sha256":  "f748c72ee65b786a1711fa15c67383d29fb9166f282fbf10ba71a65a583fa389",
+                      "name":  "DbProperties_23.2_14.tx",
+                      "size":  3424640
+                  },
+                  {
+                      "sha256":  "83928c4d0871e41e5cfc3d47db77e14c74c842064ac629de92015f9bc5be6417",
+                      "name":  "DbRuntimeIO_23.2_14.tx",
+                      "size":  83328
+                  },
+                  {
+                      "sha256":  "a2b71622b8f0c715d9c430ad8107ab9d77a857ec09dd511c19faba89463b416e",
+                      "name":  "DgPlotStyleServices_23.2_14.tx",
+                      "size":  123776
+                  },
+                  {
+                      "sha256":  "9c1e86ce039fb0d2bb542b8329c3d7a96d6a8d17c0316e2d46038b00704a3091",
+                      "name":  "DgProperties_23.2_14.tx",
+                      "size":  1184128
+                  },
+                  {
+                      "sha256":  "d16a700d502e5f30cb2560c6af12bf217f83b2320b8dadf52bc1a163d1b33e9c",
+                      "name":  "DwfCore.dll",
+                      "size":  562048
+                  },
+                  {
+                      "sha256":  "5840b06cd093efbbc72971ee561f3450a62d54f3a94092b079ad7185015b5289",
+                      "name":  "DwfToolkit.dll",
+                      "size":  3143040
+                  },
+                  {
+                      "sha256":  "1d04d3c2e0976be9947d8614875acd0473c4e7ecfc233a3bb2d9ce548db659e9",
+                      "name":  "DwfxSignatureHandler_23.2_14.tx",
+                      "size":  24448
+                  },
+                  {
+                      "sha256":  "f3dda45d25b9993a8e69f9ba01e572ac6bbf057d1c919bdb75b1c79af8f3557b",
+                      "name":  "DwfxSignatureHandlerWin_23.2_14.tx",
+                      "size":  41856
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "DwfxSignatureSample.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "EvaluationExampleMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "c6d6c3c1d6057d88f806fa6202866bd0048f402f82defcb654d160383052fc06",
+                      "name":  "Ex_Alloc_23.2_14.tx",
+                      "size":  19840
+                  },
+                  {
+                      "sha256":  "6a3955d1f501c840c6c946acfa991e32ec2bdcc28561c362f5af9cb5b150816e",
+                      "name":  "ExampleRevisionControl_23.2_14.tx",
+                      "size":  60288
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExBrepBuilderSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "8f9f6fcabd0e9b5ac01e00bfdc8619f77663b54034e9eb1e406cbc20e3ef6329",
+                      "name":  "ExCommands_23.2_14.tx",
+                      "size":  519552
+                  },
+                  {
+                      "sha256":  "f247065de65abdfc110b335463eb14ed6ebca08b0d5f8afe0740c06f341aa75e",
+                      "name":  "ExCustObjCOM_23.2_14.dll",
+                      "size":  65408
+                  },
+                  {
+                      "sha256":  "ae00a51c65b3524df3c3e2e0080c0a5feee97a75877b854ded6f94874e870c87",
+                      "name":  "ExCustObjs_23.2_14.tx",
+                      "size":  1436032
+                  },
+                  {
+                      "sha256":  "facaf860e67cb3d02a269a41705a2142f363e74a129ac7e0b563c6f4d98abf63",
+                      "name":  "ExDeepCloning_23.2_14.tx",
+                      "size":  204160
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnCellTransform.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "8ed073777948b77890ad8c647d635a928ebeffe2abcaf60691e65c384ca8e826",
+                      "name":  "ExDgnCloning_23.2_14.tx",
+                      "size":  76160
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnColladaExport.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnCopy.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnCreate.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnCreateSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "f49061012fa98011ccefcbb07e2a9d9aca2e86a160e6b753646e296589643eba",
+                      "name":  "ExDgnCurveFunctions_23.2_14.tx",
+                      "size":  83328
+                  },
+                  {
+                      "sha256":  "ab3abe49d513d74874abd8db95845e8484530dcbb024f4dc0606756723a79c63",
+                      "name":  "ExDgnDatabaseRecovery_23.2_14.tx",
+                      "size":  31616
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnDump.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "46171a0a0bde4853cb7b2c0869b6a31da255ebdda8954d3d8e64902f5079d3a4",
+                      "name":  "ExDgnDumper_23.2_14.tx",
+                      "size":  2364288
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnDumpSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnDwgProject.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "072eeeb65e31c1c2e0884bf9728f85a70a5b71cb28ad70efdb47049e92d93a48",
+                      "name":  "ExDgnElementIntersect_23.2_14.tx",
+                      "size":  105344
+                  },
+                  {
+                      "sha256":  "2de28361c2f53dcdde6c69a4d4a65c44439550db01a8873394a68cad66be220b",
+                      "name":  "ExDgnGripPoints_23.2_14.tx",
+                      "size":  130944
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnImport.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "4727c6360b30e6177950a6acbe00608e5272485f0eb4b9856fb020ad8d3bc927",
+                      "name":  "ExDgnImportLineStyle_23.2_14.tx",
+                      "size":  27008
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnMaterials.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "6d54fcfe2718b5593146698e11577ca39a5a9ac8c93f1a5b23cbc6ff994d94cc",
+                      "name":  "ExDgnOverruling_23.2_14.tx",
+                      "size":  41856
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnReadWrite.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnReadWriteSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "cd5a65995e66ef2a3ed22a326dcbabb485d84e5d27107d5e555c5c00d173691c",
+                      "name":  "ExDgnRecomputeAssocPoints_23.2_14.tx",
+                      "size":  90496
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnSimpleProjectSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnTextFormat.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnToBmp.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnVectorize.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnVectorizeSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnViewCreate.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDgnXRefDump.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "24ac9c2029373f99e4f349bce4147d6d763a85451c0b29479332f2c723dc2d04",
+                      "name":  "ExDimAssoc_23.2_14.tx",
+                      "size":  76672
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDimensioning.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDwgDgnViewerSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "4fccefa1865f2f01b3de5fffd728f995aae0b8ce55c027d53a6f2ca701ca79f6",
+                      "name":  "ExDwgIfc_23.2_14.tx",
+                      "size":  55168
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExDwgXData.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "8aa103dca55a32ddcc0632da7ac7386f9b6a92241a47984e1192734869b8ecb6",
+                      "name":  "ExDynamicBlocks_23.2_14.tx",
+                      "size":  114048
+                  },
+                  {
+                      "sha256":  "d45ca8988f0d1c6eceb44cff0e9dd3659b16cc724a1dfd1d8b8861baa500e450",
+                      "name":  "ExEntityIntersection_23.2_14.tx",
+                      "size":  30080
+                  },
+                  {
+                      "sha256":  "7bee4ded466be04fff3465736a3a9e5af25edc75b904199e456fddf180ff309e",
+                      "name":  "ExEvalWatchers_23.2_14.tx",
+                      "size":  48000
+                  },
+                  {
+                      "sha256":  "d561449efd27c297280c82870d38cc20a4f1922c7a5b7ae700c55c5347861a55",
+                      "name":  "ExFieldEvaluator_23.2_14.tx",
+                      "size":  198016
+                  },
+                  {
+                      "sha256":  "779015913002abc86280c0d57004c62723c830ab58575bdd0a195ce489da37a2",
+                      "name":  "ExFMBody_23.2_14.tx",
+                      "size":  206720
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExReactors.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExSimpleProject.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExSplines.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "ExTags.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "570f1fb5571ae33d6176bfba587a94fc27583a82db381ba2dcf6f81b2f98af43",
+                      "name":  "ExTimeProviderWin_23.2_14.tx",
+                      "size":  22400
+                  },
+                  {
+                      "sha256":  "bc029d2d08e7b241e8b07cf9bbe2fcc3f8fff7e6ea4246b298fd91cf0e7a8f3f",
+                      "name":  "FacetModeler_23.2_14.dll",
+                      "size":  995200
+                  },
+                  {
+                      "sha256":  "9b0aa8fb821041eaa9b0119fe5c3bbf47701456d314536948cac441edebe51ae",
+                      "name":  "FileDlgExt_23.2_14.dll",
+                      "size":  39296
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "FMCreate.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "FMReadEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "2d3600811f5cc80aa8d9fd6eaabc95425174630334afdd313bd584be696eae4b",
+                      "name":  "GeneratedSaxParser.dll",
+                      "size":  509824
+                  },
+                  {
+                      "sha256":  "fa0cc42a4962ef0861f9344681c85462e08883e6a73b0ba6640fa7daf68925ed",
+                      "name":  "GeoCommands_23.2_14.tx",
+                      "size":  74624
+                  },
+                  {
+                      "sha256":  "741c86303957f5a4036d42c0f33bcec09f47bb12e581c724c979c3357a9fdbfa",
+                      "name":  "GripPoints_23.2_14.tx",
+                      "size":  308096
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "IncrementalSaveEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "720300a465b9dc63f839734ce083ece31f02d49c9d6a2a71cd879f3328425431",
+                      "name":  "ISM_23.2_14.tx",
+                      "size":  160128
+                  },
+                  {
+                      "sha256":  "8e7988921f6698c34b2df50dc668062bf22a13fcd3ef956c79eb19a0b1b30585",
+                      "name":  "libBuffer.dll",
+                      "size":  32640
+                  },
+                  {
+                      "sha256":  "1d68c54b296dbaef2595ae2f52e8d215fb5b0225953aad9affa44465d0fa3d17",
+                      "name":  "libcrypto_23.2_14.dll",
+                      "size":  2008448
+                  },
+                  {
+                      "sha256":  "4e5f0894b312c14992c9e5062ce07f60213a6fd5a0ad343a3d98734b6b36b5b0",
+                      "name":  "libssl.dll",
+                      "size":  481152
+                  },
+                  {
+                      "sha256":  "46371bea7619615b0584927b75316f28d642207d780c113401a8bec37d3aaca6",
+                      "name":  "libxl.dll",
+                      "size":  9310936
+                  },
+                  {
+                      "sha256":  "ac211fac4b1a3bf52fcc726e97c834da85556b05ac585fdc6aa57c5f593e3384",
+                      "name":  "MathMLSolver.dll",
+                      "size":  997248
+                  },
+                  {
+                      "sha256":  "b2c7cf98c27dba9015346a3c80b6684e05dd8d1ebc1caa5f470b8108d2510c8d",
+                      "name":  "ModelerCommands_23.2_14.tx",
+                      "size":  181120
+                  },
+                  {
+                      "sha256":  "29b317c3b48265f7e01877d4e7380c452d1e3e048a79f0cfee0cae3e65814e88",
+                      "name":  "ModelerGeometry_23.2_14.tx",
+                      "size":  534400
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "MultiThreadedDumperMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "b5e9659060db57e113cabd3b6794b30ea05abf9d62c340dd771a08314bcf758c",
+                      "name":  "OBJToolkit_23.2_14.tx",
+                      "size":  481152
+                  },
+                  {
+                      "sha256":  "59ba97d56a01766792386c3b379946bb613c8921e3daf8a878855a268ad5e4aa",
+                      "name":  "OdaDgnApp.exe.manifest",
+                      "size":  548
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdaDgnAppSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdaDwgAppSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "b7c402249a8e18755db43cac928af2c3d8fdba6d2d6efc9563bb663083aa7952",
+                      "name":  "OdaMfcApp.exe.manifest",
+                      "size":  943
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdaSDK_First_Net_AppMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdAveEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "5376e18c69071db207c64df13b62a2b7fce686fd5c8a2435200bc74978f407f0",
+                      "name":  "OdaX.SxS.manifest",
+                      "size":  57339
+                  },
+                  {
+                      "sha256":  "239c1b10dd9e61ac8872d3fcb90c553a648a875f0be39e54ffbec0d79b3132b3",
+                      "name":  "OdaX_23.2_14.dll",
+                      "size":  5648768
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdBagFilerEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdBagFilerExSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "25d1dc6bf5c574c28edf49aaabfae44f094bb3fe071814d84b4432a9a6e3d1b2",
+                      "name":  "OdBrepModeler_23.2_14.dll",
+                      "size":  2319232
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdBrEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdBrExSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdColladaExportEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdColladaExportExSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdColladaImportEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "f02c8b1971eaf20c3161bf279b109e54e49d7162e57467d2dc8a104fe1e9d460",
+                      "name":  "OdConstraints_23.2_14.dll",
+                      "size":  873344
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdCopyEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "2d1d6de9ddda46bc31bd041c009764d6f864b8a75fd25e3043cc0389b447fa87",
+                      "name":  "OdCreationNetSwigExampleLibMgd.dll",
+                      "size":  15232
+                  },
+                  {
+                      "sha256":  "555a66f045dfcbab248e8803be49e711538a415dae89235f54c774bb30022df2",
+                      "name":  "OdCurveFunctions_23.2_14.tx",
+                      "size":  56704
+                  },
+                  {
+                      "sha256":  "500ee4b44b0a0dd7bb7666a3371edb8e40710ddf01b426dbacf43743e01f05ed",
+                      "name":  "OdDbGeoMapPE_23.2_14.tx",
+                      "size":  135552
+                  },
+                  {
+                      "sha256":  "b3fdfa263f32a45ce525595ec16da8708b2761d2559d1a32c5d1aa48f3dcbea0",
+                      "name":  "OdDbPartialViewing_23.2_14.tx",
+                      "size":  101760
+                  },
+                  {
+                      "sha256":  "85a010828f9595353a624e091b0f5c5d22dc63db57da718832b335c544f0faa9",
+                      "name":  "OdDgnExamplesLibMgd.dll",
+                      "size":  190848
+                  },
+                  {
+                      "sha256":  "80be3e9aaf1b7209c2ea9eadc9c9bbb7fe144b6f66f7525108e0a91a5e515c37",
+                      "name":  "OdDgnExamplesUILibMgd.dll",
+                      "size":  19840
+                  },
+                  {
+                      "sha256":  "1bb64822b7abbc3731dbed2b83f6937b801abfe296e2399d970fd1643bb83832",
+                      "name":  "OdDrawingsExamplesLibMgd.dll",
+                      "size":  86912
+                  },
+                  {
+                      "sha256":  "59c105d6378a0cc4b794cc0de4fff7138ff4a2cbbf51993f10161498fa7af631",
+                      "name":  "OdDrawingsExamplesUILibMgd.dll",
+                      "size":  94080
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdDwfExportEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdDwfImportEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdDwfLoad.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdDwgCdaDumpEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "59ba97d56a01766792386c3b379946bb613c8921e3daf8a878855a268ad5e4aa",
+                      "name":  "OdDwgSignEx.exe.manifest",
+                      "size":  548
+                  },
+                  {
+                      "sha256":  "85addbf8635a7f3954d3979557de85b188c40c26d67c2d539d2a1b9be8318779",
+                      "name":  "OdExGUIComponentsLibMgd.dll",
+                      "size":  24448
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdExMultiThreadSwigExamplesMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdExNonCOMPropertiesSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdExPointCloudConverterSampleSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdExRcsPointCloudReadExSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "e8f69fe133b365cdca98339760144176219479babd64f5763baed45cde9a8460",
+                      "name":  "OdExSwigCustomCommandMgd.dll",
+                      "size":  13696
+                  },
+                  {
+                      "sha256":  "de57fc7e92d6393022e4d8c41f88bc30f154cc91fe43fae80edcc8fe1e76d4f5",
+                      "name":  "OdExtractTextEx.exe.manifest",
+                      "size":  753
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdExWpfSampleDirectXMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdExWpfSampleWinFormsHostMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "215838dd44a5fb940274d41da8851321590cb06a1360aabe54ae05071004db6a",
+                      "name":  "OdGeoData_23.2_14.tx",
+                      "size":  762240
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdHatchEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "3d006240effd4289f66efc4757ffcc31395c021bfaf255099f3d85ba4f235d1e",
+                      "name":  "OdKernelExamplesLibMgd.dll",
+                      "size":  54656
+                  },
+                  {
+                      "sha256":  "caf5549a977502a71556b6ec3fb275179099bb7ad60911f9f680b9be280bdf8e",
+                      "name":  "OdKernelExamplesUILibMgd.dll",
+                      "size":  43904
+                  },
+                  {
+                      "sha256":  "9072a9669af829115c39189605b0600a620ac0063a9d6d641fd81ff0e75c1436",
+                      "name":  "OdOleItemHandler_23.2_14.tx",
+                      "size":  44928
+                  },
+                  {
+                      "sha256":  "a4683a20d9f398a3ca27dfb710e0d324559f3de10c291c700a6c7555d214e6c5",
+                      "name":  "OdOleSsItemHandler_23.2_14.tx",
+                      "size":  62848
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdPdfExportEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdPolygonMeshEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdPolylinesEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "18b52a45af1adf7a21317f6addd3fa2781f3af18f06920638fa7d6aa9eb37e13",
+                      "name":  "OdReadEx.exe",
+                      "size":  593280
+                  },
+                  {
+                      "sha256":  "de57fc7e92d6393022e4d8c41f88bc30f154cc91fe43fae80edcc8fe1e76d4f5",
+                      "name":  "OdReadEx.exe.manifest",
+                      "size":  753
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdReadExSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdSheetSet.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdSignEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdSvgExportEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "beb7b0692a8963c5bfa38198a408fd2ef8e3edee9f3b43a5183e7f529da096df",
+                      "name":  "OdSwigPointCloud_23.2_14.dll",
+                      "size":  122240
+                  },
+                  {
+                      "sha256":  "c2f2c52ffaac4385f817f340c35c4005915d2725735392b7600b7ade24f49dc4",
+                      "name":  "OdSwigPointCloudMgd.dll",
+                      "size":  62848
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdTableEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdVectorizeEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdWmfExport.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdWriteEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "OdWriteExSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "2bf3d64f1bcf71cb82905c0526917ae8bbdb657fb99f1622d415b8a29c13bc85",
+                      "name":  "oless.dll",
+                      "size":  78720
+                  },
+                  {
+                      "sha256":  "59ba97d56a01766792386c3b379946bb613c8921e3daf8a878855a268ad5e4aa",
+                      "name":  "OpenCad.exe.manifest",
+                      "size":  548
+                  },
+                  {
+                      "sha256":  "153cebba8e3fc2f93e308849769fce63d39a1631b822e94e9055d6e39a91ef92",
+                      "name":  "OpenCadTx_23.2_14.tx",
+                      "size":  42880
+                  },
+                  {
+                      "sha256":  "59ba97d56a01766792386c3b379946bb613c8921e3daf8a878855a268ad5e4aa",
+                      "name":  "OpenDGN_Viewer.exe.manifest",
+                      "size":  548
+                  },
+                  {
+                      "sha256":  "577ec8d800ad0346402a3f94ff36d247199e14a87e8f12a6227fce1ba0aed477",
+                      "name":  "OverrulingSample_23.2_14.tx",
+                      "size":  42880
+                  },
+                  {
+                      "sha256":  "029cf06fe2b6346a267bcdaf7bd0071d6e241db544f5afe5d0597b520d9801ba",
+                      "name":  "pcre.dll",
+                      "size":  74112
+                  },
+                  {
+                      "sha256":  "7ead7a364473bef15bcd2c051c1daaf622ba9e2bface407330f674b6f1085ae2",
+                      "name":  "PDFiumModule_23.2_14.tx",
+                      "size":  152448
+                  },
+                  {
+                      "sha256":  "befafa1d915b444ce7d8389402ef851f8339824e620b6375f77c98df77cae685",
+                      "name":  "PlotSettingsValidator_23.2_14.tx",
+                      "size":  100224
+                  },
+                  {
+                      "sha256":  "3b5f115347d56dcf75dbde9f4084d8bec28f8ef715d3b681f183ee8df255777f",
+                      "name":  "PlotStyleServices_23.2_14.tx",
+                      "size":  67456
+                  },
+                  {
+                      "sha256":  "857f95fdf601c1cf1d0a962ca806c39b090fdbb368256f05a10a8700f3c7929d",
+                      "name":  "PointCloudHost_23.2_14.tx",
+                      "size":  61824
+                  },
+                  {
+                      "sha256":  "f84da82744c4653313f045f2191c6457ebd68202daa423df03b819b3a7e00802",
+                      "name":  "PSToolkit_23.2_14.dll",
+                      "size":  588160
+                  },
+                  {
+                      "sha256":  "ea00c92e052156d3bd9430211ed9cc99545334df6b5651c436606c0df4e6bf1e",
+                      "name":  "RasterProcessor_23.2_14.tx",
+                      "size":  48000
+                  },
+                  {
+                      "sha256":  "2c69a1495edae1fc502b5f7f70a935688bdcabe2eaab8135e71985ee02f878d2",
+                      "name":  "RecomputeDimBlock_23.2_14.tx",
+                      "size":  478592
+                  },
+                  {
+                      "sha256":  "0fa4a0fbedb2cffa97a81d7e1fefa951649094818c9ba3483e38768cfd3bf6b7",
+                      "name":  "RText_23.2_14.tx",
+                      "size":  82816
+                  },
+                  {
+                      "sha256":  "0a3141da5ae95e9bdd9c4b583edbc3c8cd963b53278417b104eb1e0f480e0f08",
+                      "name":  "RxCommonDataAccess_23.2_14.tx",
+                      "size":  358272
+                  },
+                  {
+                      "sha256":  "f58dff7873e33a4f71b472b0ecaaa72f12b6de99397078787d028bf405400de1",
+                      "name":  "RxPdfToRasterServices_23.2_14.tx",
+                      "size":  46464
+                  },
+                  {
+                      "sha256":  "378e229adb8a29d57e5b1cc09dfff0d6c473bb1adde59a2c841d830c25143e2e",
+                      "name":  "RxProperties_23.2_14.tx",
+                      "size":  66944
+                  },
+                  {
+                      "sha256":  "aa985fb61233b184d42a98313baed5373401f5a6e88d266a518f35fdd7d7fe0e",
+                      "name":  "RxRasterServices_23.2_14.tx",
+                      "size":  5958016
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "SATBrepSample.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "SATConverter.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "SATGeomTracer.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "40808e54d4731fde4de4ba9783bb4fd501917d2f44d17640a38566fda8727564",
+                      "name":  "SCENEOE_23.2_14.tx",
+                      "size":  390016
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "SimpleCreate.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "SimpleEdit.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "SimpleExportToRaster.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "SimpleReadWrite.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "59ba97d56a01766792386c3b379946bb613c8921e3daf8a878855a268ad5e4aa",
+                      "name":  "SingleDoc.exe.manifest",
+                      "size":  548
+                  },
+                  {
+                      "sha256":  "0e36d83b5fbe4ea2fa6990354b37c9cecf20bbe46d619b5f62ca53a2d043db7e",
+                      "name":  "SpaModeler_23.2_14.tx",
+                      "size":  1730944
+                  },
+                  {
+                      "sha256":  "4fcc0ecdbb470c691dc70779c303cdd428081e2ee4be10c94bb3440c39158235",
+                      "name":  "STLImport_23.2_14.tx",
+                      "size":  59264
+                  },
+                  {
+                      "sha256":  "10de7148873bd35d7320e42216c8479df7177157900e71812759791577f63b8e",
+                      "name":  "TAcisDb_23.2_14.tx",
+                      "size":  181120
+                  },
+                  {
+                      "sha256":  "f0ade5884277e71f90e023d2dd534c8e9f4521bd64e16e2dded8a4256f30bee5",
+                      "name":  "tbb.dll",
+                      "size":  169344
+                  },
+                  {
+                      "sha256":  "e7ea3007738240969303e831422e49dcb5995ee535d14c25e4ab8a340f1e6b2e",
+                      "name":  "TD_3DSolidHistory_23.2_14.tx",
+                      "size":  354176
+                  },
+                  {
+                      "sha256":  "822ddadaa51c97d8908e8f2ea8bb7137533f81ce627ae8316cacaa42ca4ac093",
+                      "name":  "TD_AcisBuilder_23.2_14.dll",
+                      "size":  1289600
+                  },
+                  {
+                      "sha256":  "b79127d73705d406de545cd86ab6405043c51b8f9e80f9bee6b780681465180f",
+                      "name":  "TD_Alloc_23.2_14.dll",
+                      "size":  17280
+                  },
+                  {
+                      "sha256":  "37fbafc3f6d047163cdeeb477bf02021eaf94c303620659de7f8a64bc7960b0c",
+                      "name":  "TD_AssetXMLParser_23.2_14.tx",
+                      "size":  87936
+                  },
+                  {
+                      "sha256":  "3625ddaa6849d21b06c71ad50f8d4076d54ff74a1ba189d24e5b1726ec6cb5a7",
+                      "name":  "TD_Ave_23.2_14.tx",
+                      "size":  404864
+                  },
+                  {
+                      "sha256":  "18176edb06c5c045703769d53d9cc95c691c32a04cd2cc01b28cbcb51ee166f8",
+                      "name":  "TD_Br_23.2_14.dll",
+                      "size":  145280
+                  },
+                  {
+                      "sha256":  "568a58b40858da0430749945661323c13bd4365b7189a5d2cf15b4b9c8f5d187",
+                      "name":  "TD_BrepBuilder_23.2_14.dll",
+                      "size":  143744
+                  },
+                  {
+                      "sha256":  "93b83082abc961ca6831c22a6a6640ac856462b5a2d9a5509d3eea4a3b184649",
+                      "name":  "TD_BrepBuilderFiller_23.2_14.dll",
+                      "size":  194944
+                  },
+                  {
+                      "sha256":  "57fc9ce9e7551eeae26cf40be9b42419610f6dee76f6f367d1d4e61a7391f9a8",
+                      "name":  "TD_BrepRenderer_23.2_14.dll",
+                      "size":  646528
+                  },
+                  {
+                      "sha256":  "1027fcf36fdc8efa123616d8db13e12784be08aeef2572e416eeafaec96e7b90",
+                      "name":  "TD_ColladaExport_23.2_14.tx",
+                      "size":  247168
+                  },
+                  {
+                      "sha256":  "4eb970078d51e1cab0da223919a69337b95633a4e76b4d346607c86383655ab5",
+                      "name":  "TD_ColladaImport_23.2_14.tx",
+                      "size":  172928
+                  },
+                  {
+                      "sha256":  "abeb41f3d2843d7842fe7ec9dce2d1ac7d138bb5303bbdcc9e0b0183db01fad4",
+                      "name":  "TD_Db_23.2_14.dll",
+                      "size":  48000
+                  },
+                  {
+                      "sha256":  "ed21a61ca63b4e23ae15a1b83ea716211d70bc1866cab64d49d275a2351032ec",
+                      "name":  "TD_DbCore_23.2_14.dll",
+                      "size":  6419328
+                  },
+                  {
+                      "sha256":  "57dde4a79e9949f419470759489c6aaf76d922f044fd46f2e71850cf6ee9b46c",
+                      "name":  "TD_DbDataLinkWin_23.2_14.tx",
+                      "size":  32640
+                  },
+                  {
+                      "sha256":  "c10501e400a17cdf39f6ac7a65ee7e3f7653395dc62973e1c1854dfc6427d02d",
+                      "name":  "TD_DbEntities_23.2_14.tx",
+                      "size":  7198080
+                  },
+                  {
+                      "sha256":  "7c6a0d55384c946b9a807ab58cc42352c575fb09ada9b5e33182e361068a36ed",
+                      "name":  "TD_DbIO_23.2_14.tx",
+                      "size":  1697152
+                  },
+                  {
+                      "sha256":  "3a188883c5498bc6d113b4ca408d302b82c29f65140f2ec8584d1b1cdf93dc8c",
+                      "name":  "TD_DbJoinEntityPE_23.2_14.tx",
+                      "size":  89472
+                  },
+                  {
+                      "sha256":  "a49860808ae148957329eb74f35c5d7f597c7a485eb3f75bee36b3a382f6ef5c",
+                      "name":  "TD_DbRoot_23.2_14.dll",
+                      "size":  1104768
+                  },
+                  {
+                      "sha256":  "dd680e53c031a4cdac1fe4ece7e0ddee5ac283e7d5c7341371fd7a5a216a333e",
+                      "name":  "TD_DgnExport_23.2_14.tx",
+                      "size":  1078144
+                  },
+                  {
+                      "sha256":  "33ae9975c69e83c35142234fb14e311ced57622a4772c0687e3aaf9294c39a98",
+                      "name":  "TD_DgnImport_23.2_14.tx",
+                      "size":  1418112
+                  },
+                  {
+                      "sha256":  "ca75a02a2450abbd3d94c6214cf6b304ebbb2bad02d4c4842dc45e8642a569c0",
+                      "name":  "TD_DgnUnderlay_23.2_14.tx",
+                      "size":  379264
+                  },
+                  {
+                      "sha256":  "90ae8431623c2c427ba46bfa806911b6a84c4af24e7e81a655f1ba9ab676c558",
+                      "name":  "TD_Dwf7Export_23.2_14.tx",
+                      "size":  705920
+                  },
+                  {
+                      "sha256":  "442f799d66180d233a8448e512219324ee078c8b071fd28cc1e9b10a81c84a78",
+                      "name":  "TD_Dwf7Import_23.2_14.tx",
+                      "size":  630656
+                  },
+                  {
+                      "sha256":  "17906c66f79c0bcefa84c227b70595818c6233fb36693125aac3603907cc52d2",
+                      "name":  "TD_DwfUnderlay_23.2_14.tx",
+                      "size":  42880
+                  },
+                  {
+                      "sha256":  "d1d9175893352a0c1348e7268aa2d29b80dc79b091eec9e85560954d4d3053cb",
+                      "name":  "TD_DynBlocks_23.2_14.tx",
+                      "size":  968576
+                  },
+                  {
+                      "sha256":  "6e8c1024ed8c09f6239bd3a57e0f1f4fc870c399ca1ad87b9e40feff65d7f290",
+                      "name":  "TD_FtFontEngine_23.2_14.tx",
+                      "size":  681856
+                  },
+                  {
+                      "sha256":  "db3b989814206f01a14020943537ed259e504e3444b2e463b46aa9879ac08446",
+                      "name":  "TD_Ge_23.2_14.dll",
+                      "size":  4705664
+                  },
+                  {
+                      "sha256":  "6b3bcf5e40306681116272242fd9f3bc2a7eae4335fd65cd61c33de2b11b01e6",
+                      "name":  "TD_Gi_23.2_14.dll",
+                      "size":  2742656
+                  },
+                  {
+                      "sha256":  "8b268f4deb03b7d183900d4bd59555d76fe3b142569ed8214f29a0ca69719c91",
+                      "name":  "TD_Gs_23.2_14.dll",
+                      "size":  1732992
+                  },
+                  {
+                      "sha256":  "f3cbfce99973f9207227dca811386d80bac0def6cc1bcdadb7164b81048c54c0",
+                      "name":  "TD_PdfExport_23.2_14.tx",
+                      "size":  713088
+                  },
+                  {
+                      "sha256":  "11c5bb194b5267e0d9e88897ca80c4c737abf868294d7d5058c177badbdc5b84",
+                      "name":  "TD_PdfImport_23.2_14.tx",
+                      "size":  425344
+                  },
+                  {
+                      "sha256":  "3e67bf68380cd1e4ea7f51b4f580f633b71bbaeb39388628640be0d5b4d7a9fa",
+                      "name":  "TD_Pdfium.dll",
+                      "size":  5301120
+                  },
+                  {
+                      "sha256":  "451820f4381dc0e8f1ff391fea65cca3412935e7fe24398626fdcad24e7aaaeb",
+                      "name":  "TD_PDFToolkit_23.2_14.dll",
+                      "size":  2034560
+                  },
+                  {
+                      "sha256":  "816242a804f04fa8fd3a2e064f2cd52e3e54d3399597dc7538e9c40088d27775",
+                      "name":  "TD_RasterExport_23.2_14.tx",
+                      "size":  37248
+                  },
+                  {
+                      "sha256":  "d6a82c87f931360354b79336d8942aa1845d5b8708e344adfd56ee219cad5f5d",
+                      "name":  "TD_Root_23.2_14.dll",
+                      "size":  1425280
+                  },
+                  {
+                      "sha256":  "8d22494c5c9a5d7252ee980858cedd2d918e7fbfd7de420c9dd9553c1fe8f226",
+                      "name":  "TD_Sm_23.2_14.tx",
+                      "size":  436608
+                  },
+                  {
+                      "sha256":  "babb819f4b2886fc6f14dc49efbe9e62abaa5176cf2ffd590c40fe8e3288753b",
+                      "name":  "TD_SpatialIndex_23.2_14.dll",
+                      "size":  62336
+                  },
+                  {
+                      "sha256":  "d2d69cd2056d5912d0b8f158a285bb93a9cfd3d55c3cad39632fbe44a2a7f745",
+                      "name":  "TD_STLExport_23.2_14.tx",
+                      "size":  150912
+                  },
+                  {
+                      "sha256":  "93a081ef29527cc46faa7744040a5289b4951dd8fd6b1b7e2f08d6c3f74bdf8f",
+                      "name":  "TD_SvgExport_23.2_14.tx",
+                      "size":  386432
+                  },
+                  {
+                      "sha256":  "e862a199960682869ada756b431c77f260efe4f943db1f4a8969a89fc4ff24e2",
+                      "name":  "TD_SwigCore_23.2_14.dll",
+                      "size":  12712320
+                  },
+                  {
+                      "sha256":  "de7da940e2dea291622e5c6a29907896bb2e76c91cf5cfb12a24836456f40faa",
+                      "name":  "TD_SwigCoreMgd.dll",
+                      "size":  6924672
+                  },
+                  {
+                      "sha256":  "90a91b5d1c07a708038f3126e491bcaaac3743508cc4faa0904e66d822e28215",
+                      "name":  "TD_SwigDb_23.2_14.dll",
+                      "size":  11167616
+                  },
+                  {
+                      "sha256":  "46427ea49e5c5150646568f48a8c79dbeb9345144fc98d12286994c2224c6683",
+                      "name":  "TD_SwigDbMgd.dll",
+                      "size":  5471104
+                  },
+                  {
+                      "sha256":  "17d1cbdd1e6b266032e9f0f8bc66b4c980981f25fb1ca80318817d457b449d1c",
+                      "name":  "TD_Tf_23.2_14.tx",
+                      "size":  900992
+                  },
+                  {
+                      "sha256":  "67d65b504b6768359978a7a94cc3639e7961179f4ea8bb934c4969757944c522",
+                      "name":  "TD_TfCore_23.2_14.tx",
+                      "size":  107904
+                  },
+                  {
+                      "sha256":  "8032b2b4fcef928dd254131fff1433d659a0546d817fa7e5b16595b9ff2de500",
+                      "name":  "TD_ThreejsJSONExport_23.2_14.tx",
+                      "size":  1752960
+                  },
+                  {
+                      "sha256":  "18a65dc02a097b1e646ce0a3bd9ef4a8d2abf201f6ce7a4df68005c800a4a636",
+                      "name":  "TD_U3D.dll",
+                      "size":  2187648
+                  },
+                  {
+                      "sha256":  "3c3761ef04a767734cb49b5b34b65de608fa34053acd6d22bdf7bdcd4422927d",
+                      "name":  "TD_Zlib.dll",
+                      "size":  93568
+                  },
+                  {
+                      "sha256":  "1c066c7018721de17ca5a93d4d9894f2946876886f13db6dad523e6352cbb6c5",
+                      "name":  "TDwfDb_23.2_14.tx",
+                      "size":  849792
+                  },
+                  {
+                      "sha256":  "6080ea68c42e500d0eb39d747a03a7d6ec7dc80633c25a045f2dad32f4a86047",
+                      "name":  "TDXdependency.manifest",
+                      "size":  644
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "TfRevisionServerEx.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "38125b9433788aa9444ac6bbf0585d1baa800abc0b278a59c61874f8e1583ef7",
+                      "name":  "TG_Db_23.2_14.tx",
+                      "size":  17876864
+                  },
+                  {
+                      "sha256":  "f440f244e04a488170b5023c0cbcb6c472a8de5e3941e3ca7b37cca7e14e4317",
+                      "name":  "TG_Dgn7IO_23.2_14.tx",
+                      "size":  665472
+                  },
+                  {
+                      "sha256":  "ca6dd031cc15d3fa03c3ccf636756ab5f6e96e39927aa13ea1279aa8987b5d40",
+                      "name":  "TG_DwgDb_23.2_14.tx",
+                      "size":  1116544
+                  },
+                  {
+                      "sha256":  "d8ddd4a3b55f10481e7adc9133500e580e80dd4f7fbfc47e08bab779257d9d82",
+                      "name":  "TG_ModelerGeometry_23.2_14.tx",
+                      "size":  187264
+                  },
+                  {
+                      "sha256":  "71ca37d929da5561345475b4c10708e93bb7cd488017bdba7ca23eb515da81b5",
+                      "name":  "TG_SwigDb_23.2_14.dll",
+                      "size":  10825088
+                  },
+                  {
+                      "sha256":  "c838f1b375f48db89dea50178a0eba868646daef22f5c7c67c7ef79fd990efb6",
+                      "name":  "TG_SwigDbMgd.dll",
+                      "size":  5161856
+                  },
+                  {
+                      "sha256":  "786b38c398fcc050a402cd773d7a071bf0a6d365ec2ff6e2e3c7e1a87db0e279",
+                      "name":  "ThreadPool_23.2_14.tx",
+                      "size":  81792
+                  },
+                  {
+                      "sha256":  "8df3616da17a56e3a1542afa28b1266257451011ec0b792abbb3f21bbb9944ac",
+                      "name":  "tinyxml.dll",
+                      "size":  84864
+                  },
+                  {
+                      "sha256":  "2039be679b360eb1f268ecfcfa6f3a409d506902e2b19442e32c8d30abe2300d",
+                      "name":  "TRseDb_23.2_14.tx",
+                      "size":  434560
+                  },
+                  {
+                      "sha256":  "ca1c63ddaf09aa4d8596337efec1dc0edfd92346bdf34bfa88781d75aff947ea",
+                      "name":  "TrXmlVec_23.2_14.tx",
+                      "size":  1627008
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "VBDwgAppSwigMgd.exe.manifest",
+                      "size":  406
+                  },
+                  {
+                      "sha256":  "9e3dc040776ca8fb6ae7b1c11df272103a020f7f5bec87cc1a8e749ad48a9d91",
+                      "name":  "W3dTk.dll",
+                      "size":  1214336
+                  },
+                  {
+                      "sha256":  "20126d1d4bacfc3d91cb971497c701942cda649876d71b37444a692c29f1590e",
+                      "name":  "WhipTk.dll",
+                      "size":  972672
+                  },
+                  {
+                      "sha256":  "46423f3ce785615c73d1dc3e4c6203d5cdc3408ddf353cad30c5c5decf58b15f",
+                      "name":  "WipeOut_23.2_14.tx",
+                      "size":  87424
+                  },
+                  {
+                      "sha256":  "be8918559280a2e74748bf8f6238b568ed7cbf75183b2180a6a8a979a1ebf243",
+                      "name":  "XmlGLES2View.exe.manifest",
+                      "size":  406
+                  }
+              ]
+}

@@ -1,169 +1,169 @@
-# SketchUp SKP to GLB Converter DLL
+﻿# SketchUp SKP to GLB Converter DLL
 
-基于 SketchUp C API 的 SKP 文件转换器 DLL，支持将 SketchUp 模型导出为 GLB 格式供 Web 使用。
+鍩轰簬 SketchUp C API 鐨?SKP 鏂囦欢杞崲鍣?DLL锛屾敮鎸佸皢 SketchUp 妯″瀷瀵煎嚭涓?GLB 鏍煎紡渚?Web 浣跨敤銆?
 
-## 项目结构
+## 椤圭洰缁撴瀯
 
 ```
 skp_converter/
-├── CMakeLists.txt               # CMake 构建配置 ⭐推荐
-├── build.bat                    # Windows 批处理构建脚本
-├── build.ps1                    # PowerShell 构建脚本（功能最全）
-├── skp_to_gltf.h                # DLL 接口头文件
-├── skp_to_gltf.cpp              # 实现代码
-├── skp_converter.sln            # Visual Studio 解决方案
-├── skp_converter.vcxproj        # Visual Studio 项目文件
-├── test_converter.cpp           # C++ 测试程序
-├── test_dll.py                  # Python 测试脚本
-├── SDK_WIN_x64_2026-1-103/      # SketchUp SDK (已放置)
-│   ├── headers/SketchUpAPI/     # C API 头文件
-│   └── binaries/sketchup/x64/   # 库文件和 DLL
-└── README.md                    # 本文件
+鈹溾攢鈹€ CMakeLists.txt               # CMake 鏋勫缓閰嶇疆 猸愭帹鑽?
+鈹溾攢鈹€ build.bat                    # Windows 鎵瑰鐞嗘瀯寤鸿剼鏈?
+鈹溾攢鈹€ build.ps1                    # PowerShell 鏋勫缓鑴氭湰锛堝姛鑳芥渶鍏級
+鈹溾攢鈹€ skp_to_gltf.h                # DLL 鎺ュ彛澶存枃浠?
+鈹溾攢鈹€ skp_to_gltf.cpp              # 瀹炵幇浠ｇ爜
+鈹溾攢鈹€ skp_converter.sln            # Visual Studio 瑙ｅ喅鏂规
+鈹溾攢鈹€ skp_converter.vcxproj        # Visual Studio 椤圭洰鏂囦欢
+鈹溾攢鈹€ test_converter.cpp           # C++ 娴嬭瘯绋嬪簭
+鈹溾攢鈹€ test_dll.py                  # Python 娴嬭瘯鑴氭湰
+鈹溾攢鈹€ SDK_WIN_x64_2026-1-103/      # SketchUp SDK (宸叉斁缃?
+鈹?  鈹溾攢鈹€ headers/SketchUpAPI/     # C API 澶存枃浠?
+鈹?  鈹斺攢鈹€ binaries/sketchup/x64/   # 搴撴枃浠跺拰 DLL
+鈹斺攢鈹€ README.md                    # 鏈枃浠?
 ```
 
-## 快速开始
+## 蹇€熷紑濮?
 
-### 方式一：自动编译（修改即自动构建）⭐⭐推荐
+### 鏂瑰紡涓€锛氳嚜鍔ㄧ紪璇戯紙淇敼鍗宠嚜鍔ㄦ瀯寤猴級猸愨瓙鎺ㄨ崘
 
-启动文件监视，修改代码后**自动重新编译**：
+鍚姩鏂囦欢鐩戣锛屼慨鏀逛唬鐮佸悗**鑷姩閲嶆柊缂栬瘧**锛?
 
 ```powershell
 cd server\skp_converter
 
-# 启动自动编译模式
+# 鍚姩鑷姩缂栬瘧妯″紡
 .\watch-build.ps1
 
-# 或使用批处理
+# 鎴栦娇鐢ㄦ壒澶勭悊
 .\auto-build.bat
 ```
 
-然后修改 `skp_to_gltf.cpp` 或 `skp_to_gltf.h`，保存后自动编译！
+鐒跺悗淇敼 `skp_to_gltf.cpp` 鎴?`skp_to_gltf.h`锛屼繚瀛樺悗鑷姩缂栬瘧锛?
 
-### 方式二：一键构建（手动）⭐推荐
+### 鏂瑰紡浜岋細涓€閿瀯寤猴紙鎵嬪姩锛夆瓙鎺ㄨ崘
 
-**使用 PowerShell（推荐）：**
+**浣跨敤 PowerShell锛堟帹鑽愶級锛?*
 ```powershell
 cd server\skp_converter
 .\build.ps1
 ```
 
-**或使用批处理：**
+**鎴栦娇鐢ㄦ壒澶勭悊锛?*
 ```cmd
 cd server\skp_converter
 .\build.bat
 ```
 
-输出文件将自动复制到：`skp_converter_deploy/`
+杈撳嚭鏂囦欢灏嗚嚜鍔ㄥ鍒跺埌锛歚skp_converter_deploy/`
 
-### 方式二：使用 CMake
+### 鏂瑰紡浜岋細浣跨敤 CMake
 
 ```cmd
 cd server\skp_converter
 mkdir build
 cd build
 
-# 生成 Visual Studio 项目
+# 鐢熸垚 Visual Studio 椤圭洰
 cmake .. -G "Visual Studio 17 2022" -A x64
 
-# 编译 Release 版本
+# 缂栬瘧 Release 鐗堟湰
 cmake --build . --config Release
 
-# 编译 Debug 版本（可选）
+# 缂栬瘧 Debug 鐗堟湰锛堝彲閫夛級
 cmake --build . --config Debug
 ```
 
-### 方式三：Visual Studio IDE
+### 鏂瑰紡涓夛細Visual Studio IDE
 
 ```cmd
 double-click skp_converter.sln
-# 选择 Release + x64
-# 按 F7 编译
+# 閫夋嫨 Release + x64
+# 鎸?F7 缂栬瘧
 ```
 
-## 高级 CMake 选项
+## 楂樼骇 CMake 閫夐」
 
 ```bash
-# 指定生成器（Visual Studio 版本）
+# 鎸囧畾鐢熸垚鍣紙Visual Studio 鐗堟湰锛?
 cmake .. -G "Visual Studio 16 2019" -A x64  # VS2019
 cmake .. -G "Visual Studio 17 2022" -A x64  # VS2022
 
-# 只构建 DLL，不构建测试程序
+# 鍙瀯寤?DLL锛屼笉鏋勫缓娴嬭瘯绋嬪簭
 cmake .. -DBUILD_TESTS=OFF
 
-# 指定不同的构建类型
+# 鎸囧畾涓嶅悓鐨勬瀯寤虹被鍨?
 cmake .. -DCMAKE_BUILD_TYPE=Debug
 cmake .. -DCMAKE_BUILD_TYPE=Release
 
-# 安装到系统目录（需要管理员权限）
+# 瀹夎鍒扮郴缁熺洰褰曪紙闇€瑕佺鐞嗗憳鏉冮檺锛?
 cmake --install . --prefix "C:/Program Files/SKPConverter"
 ```
 
-## 部署文件
+## 閮ㄧ讲鏂囦欢
 
-编译后，将以下文件复制到后端目录：
+缂栬瘧鍚庯紝灏嗕互涓嬫枃浠跺鍒跺埌鍚庣鐩綍锛?
 
 ```
 server/
-├── skp_converter/
-│   ├── skp_converter.dll        # 编译生成的 DLL
-│   └── SketchUpAPI.dll          # SketchUp 运行时（自动复制）
-└── app_skp_api.py               # Python 后端
+鈹溾攢鈹€ skp_converter/
+鈹?  鈹溾攢鈹€ skp_converter.dll        # 缂栬瘧鐢熸垚鐨?DLL
+鈹?  鈹斺攢鈹€ SketchUpAPI.dll          # SketchUp 杩愯鏃讹紙鑷姩澶嶅埗锛?
+鈹斺攢鈹€ app.py               # Python 鍚庣
 ```
 
-一键部署脚本已自动将文件复制到 `skp_converter_deploy/` 目录。
+涓€閿儴缃茶剼鏈凡鑷姩灏嗘枃浠跺鍒跺埌 `skp_converter_deploy/` 鐩綍銆?
 
-## 测试
+## 娴嬭瘯
 
-### Python 测试
+### Python 娴嬭瘯
 
 ```cmd
 cd skp_converter_deploy
 python test_dll.py test.skp output.glb
 ```
 
-### C++ 测试（如果编译了 test_converter）
+### C++ 娴嬭瘯锛堝鏋滅紪璇戜簡 test_converter锛?
 
 ```cmd
 cd skp_converter_deploy
 test_converter.exe test.skp output.glb
 ```
 
-## 功能特性
+## 鍔熻兘鐗规€?
 
-- ✅ 读取 SKP 文件（支持组件、组、材质）
-- ✅ 自动三角化几何体
-- ✅ 导出为 GLB 2.0 格式
-- ✅ 保留材质颜色
-- ✅ 支持 UV 纹理坐标
-- ✅ Python ctypes 接口
-- ✅ 单文件部署（DLL + 依赖）
+- 鉁?璇诲彇 SKP 鏂囦欢锛堟敮鎸佺粍浠躲€佺粍銆佹潗璐級
+- 鉁?鑷姩涓夎鍖栧嚑浣曚綋
+- 鉁?瀵煎嚭涓?GLB 2.0 鏍煎紡
+- 鉁?淇濈暀鏉愯川棰滆壊
+- 鉁?鏀寔 UV 绾圭悊鍧愭爣
+- 鉁?Python ctypes 鎺ュ彛
+- 鉁?鍗曟枃浠堕儴缃诧紙DLL + 渚濊禆锛?
 
-## API 接口
+## API 鎺ュ彛
 
 ```c
-// 初始化
+// 鍒濆鍖?
 int skp_converter_init();
 
-// 转换 SKP 到 GLB
+// 杞崲 SKP 鍒?GLB
 int skp_to_glb(const char* input_path, const char* output_path);
 
-// 获取错误信息
+// 鑾峰彇閿欒淇℃伅
 const char* skp_get_error();
 
-// 获取模型统计
+// 鑾峰彇妯″瀷缁熻
 char* skp_get_stats(const char* input_path);
 
-// 释放资源
+// 閲婃斁璧勬簮
 void skp_converter_cleanup();
 void skp_free_string(char* str);
 ```
 
-## Python 使用示例
+## Python 浣跨敤绀轰緥
 
 ```python
 from skp_converter import SKPConverter
 
-# 转换文件
+# 杞崲鏂囦欢
 with SKPConverter("skp_converter/skp_converter.dll") as converter:
     if converter.convert("input.skp", "output.glb"):
         print("Success!")
@@ -171,73 +171,74 @@ with SKPConverter("skp_converter/skp_converter.dll") as converter:
         print(f"Error: {converter.get_error()}")
 ```
 
-## 技术说明
+## 鎶€鏈鏄?
 
-### 为什么需要 DLL？
+### 涓轰粈涔堥渶瑕?DLL锛?
 
-SketchUp C API 是 C/C++ 接口，Python 无法直接调用。通过编译为 DLL，Python 可以使用 ctypes 加载并调用其中的函数。
+SketchUp C API 鏄?C/C++ 鎺ュ彛锛孭ython 鏃犳硶鐩存帴璋冪敤銆傞€氳繃缂栬瘧涓?DLL锛孭ython 鍙互浣跨敤 ctypes 鍔犺浇骞惰皟鐢ㄥ叾涓殑鍑芥暟銆?
 
-### GLB 格式
+### GLB 鏍煎紡
 
-GLB (GL Transmission Format Binary) 是:
-- Web 3D 标准格式
-- Three.js 原生支持
-- 包含几何体、材质、纹理的单一文件
-- 高效的二进制格式
+GLB (GL Transmission Format Binary) 鏄?
+- Web 3D 鏍囧噯鏍煎紡
+- Three.js 鍘熺敓鏀寔
+- 鍖呭惈鍑犱綍浣撱€佹潗璐ㄣ€佺汗鐞嗙殑鍗曚竴鏂囦欢
+- 楂樻晥鐨勪簩杩涘埗鏍煎紡
 
-### 转换流程
+### 杞崲娴佺▼
 
 ```
 SKP File
-    ↓
-SketchUp C API (加载模型)
-    ↓
-提取几何体 → 三角化 → 收集材质
-    ↓
-构建 GLTF/GLB 数据结构
-    ↓
-写入二进制 GLB 文件
-    ↓
-Three.js 加载显示
+    鈫?
+SketchUp C API (鍔犺浇妯″瀷)
+    鈫?
+鎻愬彇鍑犱綍浣?鈫?涓夎鍖?鈫?鏀堕泦鏉愯川
+    鈫?
+鏋勫缓 GLTF/GLB 鏁版嵁缁撴瀯
+    鈫?
+鍐欏叆浜岃繘鍒?GLB 鏂囦欢
+    鈫?
+Three.js 鍔犺浇鏄剧ず
 ```
 
-## 故障排除
+## 鏁呴殰鎺掗櫎
 
-| 问题 | 解决方案 |
+| 闂 | 瑙ｅ喅鏂规 |
 |------|----------|
-| CMake 找不到 | 安装 CMake 并添加到 PATH |
-| Visual Studio 找不到 | 安装 VS2019+ 并选择 "Desktop development with C++" |
-| DLL 加载失败 | 确保 SketchUpAPI.dll 在同一目录 |
-| 初始化失败 | 检查是否使用 x64 编译 |
-| 转换失败 | 检查 SKP 文件版本是否受支持 |
+| CMake 鎵句笉鍒?| 瀹夎 CMake 骞舵坊鍔犲埌 PATH |
+| Visual Studio 鎵句笉鍒?| 瀹夎 VS2019+ 骞堕€夋嫨 "Desktop development with C++" |
+| DLL 鍔犺浇澶辫触 | 纭繚 SketchUpAPI.dll 鍦ㄥ悓涓€鐩綍 |
+| 鍒濆鍖栧け璐?| 妫€鏌ユ槸鍚︿娇鐢?x64 缂栬瘧 |
+| 杞崲澶辫触 | 妫€鏌?SKP 鏂囦欢鐗堟湰鏄惁鍙楁敮鎸?|
 
-### PowerShell 脚本功能
+### PowerShell 鑴氭湰鍔熻兘
 
 ```powershell
-# 标准构建
+# 鏍囧噯鏋勫缓
 .\build.ps1
 
-# 清理并重新构建
+# 娓呯悊骞堕噸鏂版瀯寤?
 .\build.ps1 -Rebuild
 
-# 只清理
+# 鍙竻鐞?
 .\build.ps1 -Clean
 
-# 构建并测试
+# 鏋勫缓骞舵祴璇?
 .\build.ps1 -Test
 
-# 构建 Debug 版本
+# 鏋勫缓 Debug 鐗堟湰
 .\build.ps1 -Configuration Debug
 ```
 
-## 许可
+## 璁稿彲
 
-- **SketchUp SDK**: Trimble Inc. 版权所有，商业使用需授权
-- **本代码**: MIT 许可证（仅示例代码部分）
+- **SketchUp SDK**: Trimble Inc. 鐗堟潈鎵€鏈夛紝鍟嗕笟浣跨敤闇€鎺堟潈
+- **鏈唬鐮?*: MIT 璁稿彲璇侊紙浠呯ず渚嬩唬鐮侀儴鍒嗭級
 
-## 参考
+## 鍙傝€?
 
-- SketchUp C API 文档: https://extensions.sketchup.com/developers/sketchup_c_api/sketchup/index.html
-- GLTF 规范: https://registry.khronos.org/glTF/
+- SketchUp C API 鏂囨。: https://extensions.sketchup.com/developers/sketchup_c_api/sketchup/index.html
+- GLTF 瑙勮寖: https://registry.khronos.org/glTF/
 - Three.js GLTFLoader: https://threejs.org/docs/#examples/en/loaders/GLTFLoader
-- CMake 文档: https://cmake.org/documentation/
+- CMake 鏂囨。: https://cmake.org/documentation/
+

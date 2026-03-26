@@ -1,84 +1,107 @@
-# 建筑图纸浏览器 - 部署完成
+﻿# 寤虹瓚鍥剧焊娴忚鍣?- 閮ㄧ讲瀹屾垚
 
-## 系统状态
+## 绯荤粺鐘舵€?
 
-| 组件 | 地址 | 状态 |
+| 缁勪欢 | 鍦板潃 | 鐘舵€?|
 |------|------|------|
-| 前端 | http://localhost:5174 | 运行中 |
-| 后端 | http://localhost:5000 | 运行中 |
-| SKP Converter DLL | 已加载 | 可用 |
+| 鍓嶇 | http://localhost:5174 | 杩愯涓?|
+| 鍚庣 | http://localhost:5000 | 杩愯涓?|
+| SKP Converter DLL | 宸插姞杞?| 鍙敤 |
 
-## 功能特性
+## 鍔熻兘鐗规€?
 
-- 3D 模型查看（GLTF/GLB/OBJ/FBX）
-- 2D 图纸查看（PDF/PNG/JPG/DXF）
-- SKP 文件自动转换（SketchUp C API）
-- DWG 文件自动转换（如有 ODAFileConverter）
+- 3D 妯″瀷鏌ョ湅锛圙LTF/GLB/OBJ/FBX锛?
+- 2D 鍥剧焊鏌ョ湅锛圥DF/PNG/JPG/DXF锛?
+- SKP 鏂囦欢鑷姩杞崲锛圫ketchUp C API锛?
+- DWG 鏂囦欢鑷姩杞崲锛堝鏈?ODAFileConverter锛?
 
-## 使用方式
+## 浣跨敤鏂瑰紡
 
-### 1. 访问前端
-打开浏览器访问：http://localhost:5174
+### 1. 璁块棶鍓嶇
+鎵撳紑娴忚鍣ㄨ闂細http://localhost:5174
 
-### 2. 上传 SKP 文件
-- 切换到 "3D 模型" 标签
-- 拖拽 SKP 文件到上传区域
-- 后端自动调用 DLL 转换为 GLB
-- 浏览器显示转换后的 3D 模型
+### 2. 涓婁紶 SKP 鏂囦欢
+- 鍒囨崲鍒?"3D 妯″瀷" 鏍囩
+- 鎷栨嫿 SKP 鏂囦欢鍒颁笂浼犲尯鍩?
+- 鍚庣鑷姩璋冪敤 DLL 杞崲涓?GLB
+- 娴忚鍣ㄦ樉绀鸿浆鎹㈠悗鐨?3D 妯″瀷
 
-### 3. API 接口
+### 3. API 鎺ュ彛
 ```bash
-# 健康检查
+# 鍋ュ悍妫€鏌?
 curl http://localhost:5000/api/health
 
-# 转换工具状态
+# 杞崲宸ュ叿鐘舵€?
 curl http://localhost:5000/api/converters/status
 
-# 上传文件
+# 涓婁紶鏂囦欢
 curl -X POST -F "file=@test.skp" http://localhost:5000/api/upload
 ```
 
-## 文件结构
+## 鏂囦欢缁撴瀯
 
 ```
-C:/development/模型数据转换显示/
-├── server/
-│   ├── app_skp_api.py          # 后端主服务
-│   ├── skp_converter.py        # DLL Python 包装器
-│   ├── uploads/                # 上传文件
-│   └── converted/              # 转换后文件
-├── skp_converter_deploy/
-│   ├── skp_converter.dll       # 编译的转换器 DLL
-│   └── SketchUpAPI.dll         # SketchUp 运行时
-└── src/                        # 前端代码
+C:/development/妯″瀷鏁版嵁杞崲鏄剧ず/
+鈹溾攢鈹€ server/
+鈹?  鈹溾攢鈹€ app.py          # 鍚庣涓绘湇鍔?
+鈹?  鈹溾攢鈹€ skp_converter.py        # DLL Python 鍖呰鍣?
+鈹?  鈹溾攢鈹€ uploads/                # 涓婁紶鏂囦欢
+鈹?  鈹斺攢鈹€ converted/              # 杞崲鍚庢枃浠?
+鈹溾攢鈹€ skp_converter_deploy/
+鈹?  鈹溾攢鈹€ skp_converter.dll       # 缂栬瘧鐨勮浆鎹㈠櫒 DLL
+鈹?  鈹斺攢鈹€ SketchUpAPI.dll         # SketchUp 杩愯鏃?
+鈹斺攢鈹€ src/                        # 鍓嶇浠ｇ爜
 ```
 
-## 重启服务
+## 閲嶅惎鏈嶅姟
 
-如果服务停止，重启命令：
+濡傛灉鏈嶅姟鍋滄锛岄噸鍚懡浠わ細
 
 ```powershell
-# 重启后端
+# 閲嶅惎鍚庣
 cd server
-python app_skp_api.py
+python app.py
 
-# 重启前端（新开窗口）
+# 閲嶅惎鍓嶇锛堟柊寮€绐楀彛锛?
 npm run dev
 ```
 
-## 故障排除
+## 鏁呴殰鎺掗櫎
 
-1. DLL 加载失败：检查 skp_converter_deploy/ 目录
-2. 转换失败：查看后端日志
-3. 前端无法连接：检查 .env 配置
+1. DLL 鍔犺浇澶辫触锛氭鏌?skp_converter_deploy/ 鐩綍
+2. 杞崲澶辫触锛氭煡鐪嬪悗绔棩蹇?
+3. 鍓嶇鏃犳硶杩炴帴锛氭鏌?.env 閰嶇疆
 
-## 开发模式
+## 寮€鍙戞ā寮?
 
 ```powershell
-# 自动编译 SKP 转换器（修改代码后自动构建）
+# 鑷姩缂栬瘧 SKP 杞崲鍣紙淇敼浠ｇ爜鍚庤嚜鍔ㄦ瀯寤猴級
 cd server/skp_converter
 .\watch-build.ps1
 ```
 
 ---
-系统已就绪，可以正常使用！
+绯荤粺宸插氨缁紝鍙互姝ｅ父浣跨敤锛?
+
+
+## ODA Runtime Vendor (New)
+
+To keep DWG parsing fully inside this repo, the ODA runtime is now stored in:
+
+- `server/vendor/oda/win-x64/2026.03.25-v1/bin`
+
+Use this command to sync/update runtime binaries:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\sync-oda-runtime.ps1 -Clean
+```
+
+Startup scripts `start-all.bat`, `start-full.bat`, and `start-production.bat` now default to this project-local runtime path.
+
+Verify backend status:
+
+```bash
+curl http://localhost:5000/api/dwg/health
+```
+
+You should see `mode=oda_cli` and `oda_runtime_in_project=true`.

@@ -1,13 +1,36 @@
 import { useRef, useState, useEffect, Suspense, useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
-import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber';
-import { OrbitControls, Grid, Box, Text, Environment } from '@react-three/drei';
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
+import { OrbitControls, Grid, Box, Text } from '@react-three/drei';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import * as THREE from 'three';
 import { Button } from '@/components/ui/button';
 import { ZoomIn, ZoomOut, RotateCcw, Maximize, AlertTriangle, FileQuestion, Ruler, X } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+
+function ProceduralEnvironment() {
+  const { gl, scene } = useThree();
+
+  useEffect(() => {
+    // Use a built-in procedural environment to avoid runtime network fetches for HDR files.
+    const pmrem = new THREE.PMREMGenerator(gl);
+    pmrem.compileEquirectangularShader();
+    const envScene = new RoomEnvironment();
+    const envMap = pmrem.fromScene(envScene, 0.05).texture;
+    const previous = scene.environment;
+    scene.environment = envMap;
+
+    return () => {
+      scene.environment = previous;
+      envMap.dispose();
+      pmrem.dispose();
+    };
+  }, [gl, scene]);
+
+  return null;
+}
 
 function AxesHelper({ size = 5 }: { size?: number }) {
   return (
@@ -604,7 +627,7 @@ export function Model3DViewer({ fileUrl, fileType }: Model3DViewerProps) {
           <hemisphereLight args={['#ffffff', '#556070', 0.9]} />
           <directionalLight position={[10, 12, 14]} intensity={2.2} />
           <directionalLight position={[-8, -6, 10]} intensity={1.0} />
-          <Environment preset="studio" />
+          <ProceduralEnvironment />
 
           {showGrid && (
             <Grid

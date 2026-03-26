@@ -1,55 +1,55 @@
-# SKP 转换测试指南
+﻿# SKP 杞崲娴嬭瘯鎸囧崡
 
-## 服务状态
+## 鏈嶅姟鐘舵€?
 
-| 服务 | 地址 | 状态 |
+| 鏈嶅姟 | 鍦板潃 | 鐘舵€?|
 |------|------|------|
-| 前端 | http://localhost:5174 | ✅ 运行中 |
-| 后端 | http://localhost:5000 | ✅ 运行中 |
-| SKP Converter DLL | skp_converter_deploy/ | ✅ 已加载 |
+| 鍓嶇 | http://localhost:5174 | 鉁?杩愯涓?|
+| 鍚庣 | http://localhost:5000 | 鉁?杩愯涓?|
+| SKP Converter DLL | skp_converter_deploy/ | 鉁?宸插姞杞?|
 
-## 验证步骤
+## 楠岃瘉姝ラ
 
-### 1. 检查 API 健康状态
+### 1. 妫€鏌?API 鍋ュ悍鐘舵€?
 
 ```bash
 curl http://localhost:5000/api/health
 ```
 
-预期输出：
+棰勬湡杈撳嚭锛?
 ```json
 {
   "status": "ok",
   "service": "CAD Converter (with SKP API)",
   "version": "1.1.0",
   "skp_api_available": true,
-  "skp_dll_path": "C:\\development\\模型数据转换显示\\skp_converter_deploy\\skp_converter.dll"
+  "skp_dll_path": "C:\\development\\妯″瀷鏁版嵁杞崲鏄剧ず\\skp_converter_deploy\\skp_converter.dll"
 }
 ```
 
-### 2. 检查转换工具状态
+### 2. 妫€鏌ヨ浆鎹㈠伐鍏风姸鎬?
 
 ```bash
 curl http://localhost:5000/api/converters/status
 ```
 
-确认 `skp_api.available` 为 `true`
+纭 `skp_api.available` 涓?`true`
 
-### 3. 使用前端上传 SKP 文件
+### 3. 浣跨敤鍓嶇涓婁紶 SKP 鏂囦欢
 
-1. 打开浏览器访问：http://localhost:5174
-2. 切换到 "3D 模型" 标签
-3. 拖拽 SKP 文件到上传区域
-4. 等待转换完成（自动转换为 GLB）
-5. 查看转换后的 3D 模型
+1. 鎵撳紑娴忚鍣ㄨ闂細http://localhost:5174
+2. 鍒囨崲鍒?"3D 妯″瀷" 鏍囩
+3. 鎷栨嫿 SKP 鏂囦欢鍒颁笂浼犲尯鍩?
+4. 绛夊緟杞崲瀹屾垚锛堣嚜鍔ㄨ浆鎹负 GLB锛?
+5. 鏌ョ湅杞崲鍚庣殑 3D 妯″瀷
 
-### 4. 使用 API 直接测试
+### 4. 浣跨敤 API 鐩存帴娴嬭瘯
 
 ```bash
-# 上传 SKP 文件
+# 涓婁紶 SKP 鏂囦欢
 curl -X POST -F "file=@test.skp" http://localhost:5000/api/upload
 
-# 预期输出：
+# 棰勬湡杈撳嚭锛?
 # {
 #   "file_id": "xxx",
 #   "original_name": "test.skp",
@@ -63,58 +63,59 @@ curl -X POST -F "file=@test.skp" http://localhost:5000/api/upload
 # }
 ```
 
-## 文件结构
+## 鏂囦欢缁撴瀯
 
 ```
-C:/development/模型数据转换显示/
-├── server/                          # 后端代码
-│   ├── app_skp_api.py              # 主后端服务
-│   ├── skp_converter.py            # Python DLL 包装器
-│   ├── uploads/                    # 上传文件存储
-│   └── converted/                  # 转换后文件存储
-├── skp_converter_deploy/           # DLL 部署目录
-│   ├── skp_converter.dll           # 编译的转换器 DLL
-│   ├── SketchUpAPI.dll             # SketchUp 运行时
-│   └── test_dll.py                 # 测试脚本
-└── src/                            # 前端代码
+C:/development/妯″瀷鏁版嵁杞崲鏄剧ず/
+鈹溾攢鈹€ server/                          # 鍚庣浠ｇ爜
+鈹?  鈹溾攢鈹€ app.py              # 涓诲悗绔湇鍔?
+鈹?  鈹溾攢鈹€ skp_converter.py            # Python DLL 鍖呰鍣?
+鈹?  鈹溾攢鈹€ uploads/                    # 涓婁紶鏂囦欢瀛樺偍
+鈹?  鈹斺攢鈹€ converted/                  # 杞崲鍚庢枃浠跺瓨鍌?
+鈹溾攢鈹€ skp_converter_deploy/           # DLL 閮ㄧ讲鐩綍
+鈹?  鈹溾攢鈹€ skp_converter.dll           # 缂栬瘧鐨勮浆鎹㈠櫒 DLL
+鈹?  鈹溾攢鈹€ SketchUpAPI.dll             # SketchUp 杩愯鏃?
+鈹?  鈹斺攢鈹€ test_dll.py                 # 娴嬭瘯鑴氭湰
+鈹斺攢鈹€ src/                            # 鍓嶇浠ｇ爜
 ```
 
-## 故障排除
+## 鏁呴殰鎺掗櫎
 
-### DLL 加载失败
+### DLL 鍔犺浇澶辫触
 
-**症状**：`skp_api_available: false`
+**鐥囩姸**锛歚skp_api_available: false`
 
-**解决**：
-1. 检查 DLL 文件是否存在：`dir skp_converter_deploy/`
-2. 确保 SketchUpAPI.dll 在同一目录
-3. 重启后端服务
+**瑙ｅ喅**锛?
+1. 妫€鏌?DLL 鏂囦欢鏄惁瀛樺湪锛歚dir skp_converter_deploy/`
+2. 纭繚 SketchUpAPI.dll 鍦ㄥ悓涓€鐩綍
+3. 閲嶅惎鍚庣鏈嶅姟
 
-### 转换失败
+### 杞崲澶辫触
 
-**症状**：上传 SKP 后显示 "转换失败"
+**鐥囩姸**锛氫笂浼?SKP 鍚庢樉绀?"杞崲澶辫触"
 
-**解决**：
-1. 检查后端日志
-2. 确保 SKP 文件未损坏
-3. 尝试使用测试脚本：`python skp_converter_deploy/test_dll.py`
+**瑙ｅ喅**锛?
+1. 妫€鏌ュ悗绔棩蹇?
+2. 纭繚 SKP 鏂囦欢鏈崯鍧?
+3. 灏濊瘯浣跨敤娴嬭瘯鑴氭湰锛歚python skp_converter_deploy/test_dll.py`
 
-### 前端无法连接后端
+### 鍓嶇鏃犳硶杩炴帴鍚庣
 
-**症状**："后端服务离线"
+**鐥囩姸**锛?鍚庣鏈嶅姟绂荤嚎"
 
-**解决**：
-1. 检查后端是否运行：`curl http://localhost:5000/api/health`
-2. 检查 `.env` 文件中的 `VITE_API_URL`
-3. 确保没有防火墙阻挡
+**瑙ｅ喅**锛?
+1. 妫€鏌ュ悗绔槸鍚﹁繍琛岋細`curl http://localhost:5000/api/health`
+2. 妫€鏌?`.env` 鏂囦欢涓殑 `VITE_API_URL`
+3. 纭繚娌℃湁闃茬伀澧欓樆鎸?
 
-## 手动测试 DLL
+## 鎵嬪姩娴嬭瘯 DLL
 
 ```bash
 cd skp_converter_deploy
 python test_dll.py test.skp output.glb
 ```
 
-## 浏览器访问
+## 娴忚鍣ㄨ闂?
 
-打开 http://localhost:5174 使用完整功能！
+鎵撳紑 http://localhost:5174 浣跨敤瀹屾暣鍔熻兘锛?
+

@@ -10,11 +10,13 @@ import shutil
 import subprocess
 import json
 import struct
+import re
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import logging
+from dwg_service_core import DwgServiceCore
 
 # 闁板秶鐤嗛弮銉ョ箶
 logging.basicConfig(
@@ -104,6 +106,9 @@ MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 CONVERTED_FOLDER.mkdir(parents=True, exist_ok=True)
 
+# Direct DWG interaction service (session-based, ODA-ready adapter).
+DWG_SERVICE = DwgServiceCore(UPLOAD_FOLDER)
+
 # 閸忎浇顔忛惃鍕瀮娴犺埖澧跨仦鏇炴倳
 ALLOWED_3D_EXTENSIONS = {'skp', 'gltf', 'glb', 'obj', 'fbx'}
 ALLOWED_2D_EXTENSIONS = {'dwg', 'dxf', 'pdf', 'png', 'jpg', 'jpeg'}
@@ -132,8 +137,50 @@ def get_file_type(filename):
     return None, None
 
 
+def resolve_uploaded_file_by_id(file_id: str):
+    if not file_id:
+        return None
+    for uploaded_file in UPLOAD_FOLDER.glob(f'{file_id}_*'):
+        if uploaded_file.is_file():
+            return uploaded_file
+    return None
+
+
+def resolve_dwg_from_download_url(download_url: str):
+    if not download_url:
+        return None
+    m = re.search(r'/api/download/original/([0-9a-fA-F-]+)\.dwg$', download_url)
+    if not m:
+        return None
+    return resolve_uploaded_file_by_id(m.group(1))
+
+
+def is_probable_dwg_upload(file_storage) -> bool:
+    """Best-effort DWG content signature check.
+
+    DWG files usually start with an ASCII version code like AC1027/AC1032.
+    This fallback is used when filename extension is lost/garbled by clients.
+    """
+    if file_storage is None:
+        return False
+    stream = getattr(file_storage, 'stream', None)
+    if stream is None:
+        return False
+    try:
+        pos = stream.tell()
+        head = stream.read(6) or b''
+        stream.seek(pos)
+        if len(head) < 6:
+            return False
+        sig = head.decode('ascii', errors='ignore')
+        return sig.startswith('AC10') and sig[4:6].isdigit()
+    except Exception:
+        return False
+
+
 def check_conversion_tools():
     """Return converter tool availability."""
+    dwg_health = DWG_SERVICE.health()
     tools = {
         'skp_api': SKP_API_AVAILABLE,
         'skp_dll_path': SKP_DLL_PATH,
@@ -142,6 +189,8 @@ def check_conversion_tools():
         'oda_converter': shutil.which('ODAFileConverter') is not None,
         'assimp': shutil.which('assimp') is not None,
         'blender': shutil.which('blender') is not None,
+        'dwg_direct_service': dwg_health.get('status') == 'ok',
+        'dwg_direct_mode': dwg_health.get('mode'),
     }
     return tools
 
@@ -393,12 +442,15 @@ def convert_file(input_path: Path, target_format: str) -> tuple:
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health endpoint."""
+    dwg_health_info = DWG_SERVICE.health()
     return jsonify({
         'status': 'ok',
         'service': 'CAD Converter (with SKP API)',
         'version': '1.1.0',
         'skp_api_available': SKP_API_AVAILABLE,
-        'skp_dll_path': SKP_DLL_PATH
+        'skp_dll_path': SKP_DLL_PATH,
+        'dwg_direct_mode': dwg_health_info.get('mode'),
+        'dwg_direct_sessions': dwg_health_info.get('session_count'),
     })
 
 
@@ -414,6 +466,133 @@ def converter_status():
             'description': 'SketchUp C API for direct SKP conversion'
         }
     })
+
+
+@app.route('/api/dwg/health', methods=['GET'])
+def dwg_health():
+    """Health endpoint for direct DWG interaction service."""
+    info = DWG_SERVICE.health()
+    status_code = 200 if info.get('status') == 'ok' else 503
+    return jsonify(info), status_code
+
+
+@app.route('/api/dwg/open', methods=['POST'])
+def dwg_open():
+    """Open DWG document and create interactive session."""
+    try:
+        file_path = None
+        original_name = None
+
+        if 'file' in request.files and request.files['file'].filename:
+            incoming = request.files['file']
+            raw_name = str(incoming.filename or '').strip()
+            has_dwg_ext = raw_name.lower().endswith('.dwg')
+            if not has_dwg_ext and not is_probable_dwg_upload(incoming):
+                return jsonify({'error': 'only .dwg is supported for direct open'}), 400
+            file_id = str(uuid.uuid4())
+            safe_name = secure_filename(raw_name).strip()
+            # Chinese or special-character filenames may collapse during sanitization.
+            # Preserve a guaranteed .dwg extension for backend type checks.
+            if not safe_name or not safe_name.lower().endswith('.dwg'):
+                safe_name = f"upload_{file_id}.dwg"
+            original_name = raw_name
+            file_path = UPLOAD_FOLDER / f"{file_id}_{safe_name}"
+            incoming.save(str(file_path))
+        else:
+            payload = request.get_json(silent=True) or {}
+            file_id = str(payload.get('file_id', '')).strip()
+            download_url = str(payload.get('download_url', '')).strip()
+
+            if file_id:
+                file_path = resolve_uploaded_file_by_id(file_id)
+            elif download_url:
+                file_path = resolve_dwg_from_download_url(download_url)
+
+            if file_path:
+                original_name = file_path.name.split('_', 1)[1] if '_' in file_path.name else file_path.name
+
+        if not file_path or not file_path.exists():
+            return jsonify({'error': 'dwg source file not found'}), 404
+        if file_path.suffix.lower() != '.dwg':
+            return jsonify({'error': 'source file is not a .dwg document'}), 400
+
+        opened = DWG_SERVICE.open_document(file_path, original_name or file_path.name)
+        return jsonify({'ok': True, **opened})
+    except Exception as e:
+        logger.error(f"dwg_open error: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dwg/<doc_id>/spaces', methods=['GET'])
+def dwg_spaces(doc_id):
+    spaces = DWG_SERVICE.list_spaces(doc_id)
+    if not spaces:
+        return jsonify({'error': 'document session not found'}), 404
+    return jsonify({'ok': True, **spaces})
+
+
+@app.route('/api/dwg/<doc_id>/entities', methods=['GET'])
+def dwg_entities(doc_id):
+    space_id = request.args.get('space_id', default=None, type=str)
+    limit = request.args.get('limit', default=None, type=int)
+    entities = DWG_SERVICE.list_entities(doc_id, space_id=space_id, limit=limit)
+    if entities is None:
+        return jsonify({'error': 'document session not found'}), 404
+    return jsonify({'ok': True, **entities})
+
+
+@app.route('/api/dwg/<doc_id>/view', methods=['POST'])
+def dwg_view(doc_id):
+    payload = request.get_json(silent=True) or {}
+    updated = DWG_SERVICE.set_view(doc_id, payload)
+    if not updated:
+        return jsonify({'error': 'document session not found'}), 404
+    return jsonify({'ok': True, **updated})
+
+
+@app.route('/api/dwg/<doc_id>/pick', methods=['POST'])
+def dwg_pick(doc_id):
+    payload = request.get_json(silent=True) or {}
+    picked = DWG_SERVICE.pick(doc_id, payload)
+    if picked is None:
+        return jsonify({'error': 'document session not found'}), 404
+    return jsonify({'ok': True, **picked})
+
+
+@app.route('/api/dwg/<doc_id>/snap', methods=['POST'])
+def dwg_snap(doc_id):
+    payload = request.get_json(silent=True) or {}
+    snapped = DWG_SERVICE.snap(doc_id, payload)
+    if snapped is None:
+        return jsonify({'error': 'document session not found'}), 404
+    return jsonify({'ok': True, **snapped})
+
+
+@app.route('/api/dwg/<doc_id>/measure', methods=['POST'])
+def dwg_measure(doc_id):
+    payload = request.get_json(silent=True) or {}
+    measured = DWG_SERVICE.measure(doc_id, payload)
+    if measured is None:
+        return jsonify({'error': 'document session not found'}), 404
+    return jsonify({'ok': True, **measured})
+
+
+@app.route('/api/dwg/<doc_id>/entity/<entity_id>', methods=['GET'])
+def dwg_entity(doc_id, entity_id):
+    entity = DWG_SERVICE.get_entity(doc_id, entity_id)
+    if entity is None:
+        return jsonify({'error': 'document session not found'}), 404
+    if not entity.get('entity'):
+        return jsonify({'error': 'entity not found'}), 404
+    return jsonify({'ok': True, **entity})
+
+
+@app.route('/api/dwg/<doc_id>/close', methods=['POST'])
+def dwg_close(doc_id):
+    closed = DWG_SERVICE.close_document(doc_id)
+    if not closed:
+        return jsonify({'error': 'document session not found'}), 404
+    return jsonify({'ok': True, 'doc_id': doc_id, 'closed': True})
 
 
 @app.route('/api/upload', methods=['POST'])
@@ -453,8 +632,6 @@ def upload_file():
     target_format = None
     if file_type == 'skp':
         target_format = 'glb'
-    elif file_type == 'dwg':
-        target_format = 'pdf'
     
     needs_conversion = target_format is not None
     
@@ -470,6 +647,7 @@ def upload_file():
         'conversion_error': None,
         'conversion_method': None,
         'conversion_debug': None,
+        'dwg_direct_open': file_type == 'dwg',
     }
     
     if needs_conversion:
@@ -549,8 +727,10 @@ def cleanup():
                     if file_age > max_age:
                         file_path.unlink()
                         cleaned += 1
+
+        expired_sessions = DWG_SERVICE.cleanup_expired(max_age)
         
-        return jsonify({'message': '娓呯悊瀹屾垚', 'cleaned': cleaned})
+        return jsonify({'message': '娓呯悊瀹屾垚', 'cleaned': cleaned, 'expired_dwg_sessions': expired_sessions})
     except Exception as e:
         logger.error(f"Cleanup error: {e}")
         return jsonify({'error': str(e)}), 500

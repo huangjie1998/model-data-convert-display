@@ -1,4 +1,4 @@
-# SketchUp SKP to GLB Converter - Build Instructions
+﻿# SketchUp SKP to GLB Converter - Build Instructions
 
 ## Prerequisites
 
@@ -22,11 +22,11 @@
    ```
 
 2. **Select configuration**
-   - Build → Configuration Manager
+   - Build 鈫?Configuration Manager
    - Select "Release" and "x64"
 
 3. **Build the project**
-   - Build → Build Solution (or press F7)
+   - Build 鈫?Build Solution (or press F7)
    - Output will be in: `x64/Release/skp_converter.dll`
 
 4. **Verify output**
@@ -38,12 +38,12 @@
 
 1. **Open Developer Command Prompt**
    ```
-   Start Menu → Visual Studio 2022 → Developer Command Prompt
+   Start Menu 鈫?Visual Studio 2022 鈫?Developer Command Prompt
    ```
 
 2. **Navigate to project directory**
    ```cmd
-   cd C:\development\模型数据转换显示\server\skp_converter
+   cd C:\development\妯″瀷鏁版嵁杞崲鏄剧ず\server\skp_converter
    ```
 
 3. **Build Release version**
@@ -99,10 +99,10 @@ Copy these files to your backend directory:
 
 ```
 server/
-├── skp_converter/
-│   ├── skp_converter.dll     # The compiled DLL (from x64/Release/)
-│   └── SketchUpAPI.dll       # Runtime library (from SDK or build output)
-└── app_skp_api.py            # Python backend that loads the DLL
+鈹溾攢鈹€ skp_converter/
+鈹?  鈹溾攢鈹€ skp_converter.dll     # The compiled DLL (from x64/Release/)
+鈹?  鈹斺攢鈹€ SketchUpAPI.dll       # Runtime library (from SDK or build output)
+鈹斺攢鈹€ app.py            # Python backend that loads the DLL
 ```
 
 ### Test the DLL
@@ -184,3 +184,4 @@ This project uses the SketchUp C API which requires compliance with Trimble's li
 - Development and testing: Free
 - Commercial deployment: Requires license from Trimble Inc.
 - See: https://www.trimble.com/legal/developers/terms-and-conditions
+

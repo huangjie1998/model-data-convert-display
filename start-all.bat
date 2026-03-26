@@ -80,9 +80,12 @@ if "%BACKEND%"=="1" (
   )
 
   set "SKP_DLL_DIR=%~dp0skp_converter_deploy"
-  set "PATH=%SKP_DLL_DIR%;!PATH!"
+  set "ODA_VERSION=2026.03.25-v1"
+  set "ODA_RUNTIME_ROOT=%~dp0server\vendor\oda\win-x64\%ODA_VERSION%"
+  set "ODA_READ_EXE=%ODA_RUNTIME_ROOT%\bin\OdReadEx.exe"
+  set "PATH=%SKP_DLL_DIR%;%ODA_RUNTIME_ROOT%\bin;!PATH!"
 
-  start "backend-%BACKEND_PORT%" cmd /k "cd /d %~dp0server && call venv\Scripts\activate.bat && set SKP_DLL_DIR=%~dp0skp_converter_deploy && set PATH=%SKP_DLL_DIR%;%%PATH%% && python app_skp_api.py"
+  start "backend-%BACKEND_PORT%" cmd /k "cd /d %~dp0server && call venv\Scripts\activate.bat && set SKP_DLL_DIR=%~dp0skp_converter_deploy && set ODA_VERSION=2026.03.25-v1 && set ODA_RUNTIME_ROOT=%~dp0server\vendor\oda\win-x64\%ODA_VERSION% && set ODA_READ_EXE=%ODA_RUNTIME_ROOT%\bin\OdReadEx.exe && set PATH=%SKP_DLL_DIR%;%ODA_RUNTIME_ROOT%\bin;%%PATH%% && python app.py"
   cd /d "%~dp0"
 )
 
