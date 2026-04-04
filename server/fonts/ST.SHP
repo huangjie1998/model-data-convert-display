@@ -1,0 +1,94 @@
+;;; ST.SHP  -- Surface Texture shape file example.
+;;;
+;;; These shape definitions can be LOADed into AutoCAD and used to annotate
+;;; mechanical part drawings that specify surface texture.  These shapes are
+;;; provided as examples of shape definition; no warranty, as to the
+;;; appropriateness of the shape definitions for a particular application,
+;;; is expressed or implied.  The shape definitions are based on common
+;;; drafting practice and do not represent adherence to a specific standard.
+;;;
+;;; The definitions are constructed using the sub-shape mechanism. The three
+;;; classes of use are defined by the sub-shapes "opt" (optional), "obl"
+;;; (obligatory), and "pro" (prohibited).  Additional sub-shapes define the
+;;; standard machine tool surface lays: "lay-x" (angular in both directions),
+;;; "lay-m" (multi-directional), "lay-c" (circular), "lay-r" (radial),
+;;; "lay-p" (non-directional; pitted or protuberant), "lay-perp"
+;;; (perpendicular), and "lay-parallel".  Sub-shapes are named in lower case
+;;; and are not listed by the "?" options of the LOAD and SHAPE commands.
+;;;
+;;; The ten (10) sub-shape definitions are combined into twenty-one (21)
+;;; named shapes, where the name is a combination of the use class and the
+;;; lay type, such as "OPT-R" is the symbol for "Optional, radial lay".
+;;;
+;;; Additional surface texture mark information, such as Waviness Height,
+;;; Roughness Values, or Machining Allowance, can then be added to the drawing
+;;; using the TEXT or DTEXT commands.
+
+;;; Sub-shape definitions for "Optional", "Obligatory", and "Prohibited":
+*200,8,opt
+3,20,035,2,03D,1,063,0
+*201,9,obl
+3,20,2,033,1,038,03D,063,0
+*202,36,pro
+3,20,063,2,06B,1,035,3,8,2,8,(15,-12),4,3,1,028,
+016,024,012,020,01E,02C,01A,2,3,3,8,(-15,12),4,8,03D,063,1,0
+
+;;; Sub-shape definitions for lays:
+*203,12,lay-x
+3,2,8,(4,6),2,048,1,8,(4,-6),0
+*204,7,lay-m
+3,2,064,04D,043,06C,0
+*205,15,lay-c
+3,2,2,040,014,1,01A,028,016,044,012,020,01E,03C,0
+*206,13,lay-r
+3,2,064,030,01E,01C,01A,038,2,010,1,03E,0
+*207,9,lay-p
+3,2,064,030,01E,01C,01A,038,0
+*208,8,lay-perp
+3,2,040,2,028,1,064,0
+*209,11,lay-parallel
+3,2,2,044,1,040,2,02C,1,048,0
+
+;;; Named shape definitions that combine two sub-shapes for complete mark:
+*210,12,OPT-X
+7,200,3,2,2,8,(-1,-8),1,7,203,0
+*211,12,OBL-X
+7,201,3,2,2,8,(-1,-8),1,7,203,0
+*212,12,PRO-X
+7,202,3,2,2,8,(-1,-8),1,7,203,0
+*213,12,OPT-M
+7,200,3,2,2,8,(-1,-8),1,7,204,0
+*214,12,OBL-M
+7,201,3,2,2,8,(-1,-8),1,7,204,0
+*215,12,PRO-M
+7,202,3,2,2,8,(-1,-8),1,7,204,0
+*216,12,OPT-C
+7,200,3,2,2,8,(-1,-8),1,7,205,0
+*217,12,OBL-C
+7,201,3,2,2,8,(-1,-8),1,7,205,0
+*218,12,PRO-C
+7,202,3,2,2,8,(-1,-8),1,7,205,0
+*219,12,OPT-R
+7,200,3,2,2,8,(-1,-8),1,7,206,0
+*220,12,OBL-R
+7,201,3,2,2,8,(-1,-8),1,7,206,0
+*221,12,PRO-R
+7,202,3,2,2,8,(-1,-8),1,7,206,0
+*222,12,OPT-P
+7,200,3,2,2,8,(-1,-8),1,7,207,0
+*223,12,OBL-P
+7,201,3,2,2,8,(-1,-8),1,7,207,0
+*224,12,PRO-P
+7,202,3,2,2,8,(-1,-8),1,7,207,0
+*225,12,OPT-PERP
+7,200,3,2,2,8,(-1,-8),1,7,208,0
+*226,12,OBL-PERP
+7,201,3,2,2,8,(-1,-8),1,7,208,0
+*227,12,PRO-PERP
+7,202,3,2,2,8,(-1,-8),1,7,208,0
+*228,12,OPT-PARALLEL
+7,200,3,2,2,8,(-1,-8),1,7,209,0
+*229,12,OBL-PARALLEL
+7,201,3,2,2,8,(-1,-8),1,7,209,0
+*230,12,PRO-PARALLEL
+7,202,3,2,2,8,(-1,-8),1,7,209,0

@@ -541,6 +541,34 @@ def dwg_entities(doc_id):
     return jsonify({'ok': True, **entities})
 
 
+@app.route('/api/dwg/<doc_id>/hierarchy', methods=['GET'])
+def dwg_hierarchy(doc_id):
+    space_id = request.args.get('space_id', default=None, type=str)
+    hierarchy = DWG_SERVICE.list_hierarchy(doc_id, space_id=space_id)
+    if hierarchy is None:
+        return jsonify({'error': 'document session not found'}), 404
+    return jsonify({'ok': True, **hierarchy})
+
+
+@app.route('/api/dwg/<doc_id>/fonts', methods=['GET'])
+def dwg_fonts(doc_id):
+    fonts = DWG_SERVICE.list_fonts(doc_id)
+    if fonts is None:
+        return jsonify({'error': 'document session not found'}), 404
+    return jsonify({'ok': True, **fonts})
+
+
+@app.route('/api/dwg/<doc_id>/fonts/<font_key>/file', methods=['GET'])
+def dwg_font_file(doc_id, font_key):
+    resolved = DWG_SERVICE.get_font_file(doc_id, font_key)
+    if resolved is None:
+        return jsonify({'error': 'font file not found'}), 404
+    font_path = resolved.get('path')
+    if not isinstance(font_path, Path):
+        return jsonify({'error': 'invalid font path'}), 500
+    return send_file(str(font_path), as_attachment=False, conditional=True, download_name=font_path.name)
+
+
 @app.route('/api/dwg/<doc_id>/view', methods=['POST'])
 def dwg_view(doc_id):
     payload = request.get_json(silent=True) or {}

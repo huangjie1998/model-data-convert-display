@@ -1,0 +1,156 @@
+%    Copyright (C) 1989, 1990, 1991 Aladdin Enterprises.  All rights reserved.
+%    Distributed by Free Software Foundation, Inc.
+%
+% This file is part of Ghostscript.
+%
+% Ghostscript is distributed in the hope that it will be useful, but
+% WITHOUT ANY WARRANTY.  No author or distributor accepts responsibility
+% to anyone for the consequences of using it or for whether it serves any
+% particular purpose or works at all, unless he says so in writing.  Refer
+% to the Ghostscript General Public License for full details.
+%
+% Everyone is granted permission to copy, modify and redistribute
+% Ghostscript, but only under the conditions described in the Ghostscript
+% General Public License.  A copy of this license is supposed to have been
+% given to you along with Ghostscript so you can know your rights and
+% responsibilities.  It should be in a file named COPYING.  Among other
+% things, the copyright notice and this notice must be preserved on all
+% copies.
+
+% This file provides a dummy 'statusdict' and 'serverdict',
+% and a few of the other LaserWriter operators, for the benefit of
+% PostScript programs that think they are running on a LaserWriter.
+
+%
+%  ***********************************************************************
+%  *                                                                     *
+%  *    M   M    OOO    DDDD     III    FFFFF    III    EEEEE   DDDD     *
+%  *    MM MM   O   O   D   D     I     F         I     E       D   D    *
+%  *    M M M   O   O   D   D     I     F         I     E       D   D    *
+%  *    M   M   O   O   D   D     I     FFF       I     EEE     D   D    *
+%  *    M   M   O   O   D   D     I     F         I     E       D   D    *
+%  *    M   M   O   O   D   D     I     F         I     E       D   D    *
+%  *    M   M    OOO    DDDD     III    F        III    EEEEE   DDDD     *
+%  *                                                                     *
+%  *                                                                     *
+%  *                   FFFFF    III    L       EEEEE                     *
+%  *                   F         I     L       E                         *
+%  *                   F         I     L       E                         *
+%  *                   FFF       I     L       EEE                       *
+%  *                   F         I     L       E                         *
+%  *                   F         I     L       E                         *
+%  *                   F        III    LLLLL   EEEEE                     *
+%  *                                                                     *
+%  ***********************************************************************
+%
+%                              .-------------.
+%                              |      /\     |
+%                              |     /  \    |
+%                              |    / /\ \   |
+%                              |   / /  \ \  |
+%                              |  / / /\ \ \ |
+%                              | / / /  \ \ \|
+%                              `-------------'  (R)
+%                               Autodesk, Inc.
+%                   Tools For the Golden Age of Engineering
+%
+%   In  keeping with subparagraph 2a of the Gnu General Public License
+%   (Version 1, February 1989):
+%
+%   2.  You may modify your copy or  copies  of  the  Program  or  any
+%   portion  of  it,  and copy and distribute such modifications under
+%   the terms of Paragraph 1 above, provided  that  you  also  do  the
+%   following:
+%
+%      a)  cause the modified files to carry prominent notices stating
+%          that you changed the files and the date of any change; and...
+%
+%   the  following  is  a  summary of the changes to this file made by
+%   Autodesk, Inc. in August 1991 in order to adapt Ghostscript to run
+%   as  an  ADS  application  and  thereby  to  perform  rendering  of
+%   PostScript files within AutoCAD.
+%
+%   STATUSD.PS      Renamed to be ACADPSD.PS
+%
+% ************************************************************************
+
+systemdict begin
+
+ /letter {statusdict begin 0 setpagetype end} def
+ /note {statusdict begin 1 setpagetype end} def
+ /legal {} def
+ /a4 {} def                     % not in original Red Book,
+                                % but apparently standard now
+
+ /statusdict 50 dict def
+ /serverdict 4 dict def
+
+end
+
+statusdict begin
+
+ /checkpassword {statusdict begin .password eq end} def
+ /defaulttimeouts {statusdict begin .timeouts aload pop end} def
+%/dostartpage
+ /eescratch {pop 0} def
+ /idlefonts {statusdict begin mark .idlefonts aload pop end} def
+ /jobname () def
+%/jobtimeout
+ /manualfeed false def
+ /manualfeedtimeout 60 def
+ /margins {statusdict begin .topmargin .leftmargin end} def
+ /pagecount {4711} def
+ /pagestackorder {false} def
+%/pagetype
+ /prefeed false def
+ /printererror {pop pop} def
+ /printername {statusdict begin .printername exch copy end} def
+ /product (Ghostscript) def
+ /revision 20100 def
+ /sccbatch {pop 9600 0} def
+ /sccinteractive {pop 9600 0} def
+ /setdefaulttimeouts {statusdict begin .timeouts astore pop end} def
+ /setdostartpage {statusdict exch /dostartpage exch put} def
+ /seteescratch {pop pop} def
+ /setidlefonts {] statusdict exch /.idlefonts exch put} def
+ /setjobtimeout {statusdict exch /jobtimeout exch put} def
+ /setmargins
+  {statusdict begin /.lmargin exch def /.topmargin exch def end} def
+ /setpagetype {statusdict exch /pagetype exch put} def
+ /setpassword
+  {exch checkpassword
+    {statusdict exch /.password exch put true}
+    {pop false}
+   ifelse} def
+ /setprintername
+  {dup length string copy statusdict exch /printername exch put} def
+ /setsccbatch {pop pop pop} def
+ /setsccinteractive {pop pop pop} def
+ /waittimeout 300 def
+
+/.password 0 def
+/.timeouts [0 60 30] def
+true setdostartpage
+mark setidlefonts
+0 setjobtimeout
+0 0 setmargins
+0 setpagetype
+product setprintername
+
+end     % statusdict
+
+% The following contents of serverdict are a complete guess,
+% based on some observed LaserWriter boilerplate.
+
+serverdict begin
+
+ /execjob { } def
+% The Red Book implies that something like the following is
+% an appropriate definition of exitserver.
+ /exitserver { clear stop } def
+% However, this interacts badly with Ghostscript's present error handler,
+% so we override it with the following less appropriate definition.
+ /exitserver { clear cleardictstack } def
+ /setrealdevice { } def
+
+end     % serverdict

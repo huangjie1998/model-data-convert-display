@@ -263,7 +263,7 @@ export function BackendFileUpload({
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: dropzoneAccept,
-    multiple: false,
+    multiple: true,
   });
 
   const removeFile = (id: string) => {
@@ -288,7 +288,7 @@ export function BackendFileUpload({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="h-full min-h-0 flex flex-col gap-4">
       {supportsSkp && backendAvailable === false && (
         <Alert className="bg-amber-900/20 border-amber-800">
           <AlertTriangle className="h-4 w-4 text-amber-500" />
@@ -343,20 +343,20 @@ export function BackendFileUpload({
       <div
         {...getRootProps()}
         className={`
-          relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer
+          relative flex-1 min-h-[340px] border-2 border-dashed rounded-xl p-6 md:p-8 text-center cursor-pointer
           transition-all duration-200 ease-in-out
           ${isDragActive ? 'border-blue-500 bg-blue-500/10' : 'border-gray-600 hover:border-gray-500 hover:bg-gray-800/50'}
         `}
       >
         <input {...getInputProps()} />
 
-        <div className="flex flex-col items-center gap-3">
+        <div className="h-full flex flex-col items-center justify-center gap-3">
           <div className={`p-4 rounded-full transition-all duration-200 ${isDragActive ? 'bg-blue-500/20' : 'bg-gray-800'}`}>
             <Upload className={`h-8 w-8 transition-colors ${isDragActive ? 'text-blue-400' : 'text-gray-400'}`} />
           </div>
 
           <div>
-            <p className="text-lg font-medium text-gray-200">{isDragActive ? 'Drop file to upload' : title}</p>
+            <p className="text-lg font-medium text-gray-200">{isDragActive ? 'Drop files to upload' : title}</p>
             <p className="text-sm text-gray-500 mt-1">{description}</p>
             {supportsSkp && backendAvailable !== false && (
               <p className="text-xs text-blue-400 mt-2">SKP files will be auto-converted to GLB.</p>
@@ -380,7 +380,7 @@ export function BackendFileUpload({
       </div>
 
       {uploadingFiles.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-2 max-h-56 overflow-auto pr-1">
           {uploadingFiles.map((uploadingFile) => (
             <div key={uploadingFile.id} className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg">
               <div className="p-2 bg-gray-700 rounded">

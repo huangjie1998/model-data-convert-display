@@ -19,10 +19,13 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
+
+Affine2D = Tuple[float, float, float, float, float, float]
+DWG_CORE_PARSER_REV = "2026-03-29-r24"
 
 
 def _point_distance(a: Dict[str, float], b: Dict[str, float]) -> float:
@@ -90,6 +93,31 @@ def _point_angle_from_center(center: Dict[str, float], p: Dict[str, float]) -> f
     return _normalize_angle_deg(math.degrees(math.atan2(float(p["y"]) - float(center["y"]), float(p["x"]) - float(center["x"]))))
 
 
+def _distance_to_bbox_2d(point: Dict[str, float], bbox_obj: object) -> Optional[float]:
+    if not isinstance(bbox_obj, dict):
+        return None
+    bmin = bbox_obj.get("min")
+    bmax = bbox_obj.get("max")
+    if not isinstance(bmin, dict) or not isinstance(bmax, dict):
+        return None
+    try:
+        min_x = float(bmin["x"])
+        min_y = float(bmin["y"])
+        max_x = float(bmax["x"])
+        max_y = float(bmax["y"])
+        px = float(point["x"])
+        py = float(point["y"])
+    except Exception:
+        return None
+    if min_x > max_x:
+        min_x, max_x = max_x, min_x
+    if min_y > max_y:
+        min_y, max_y = max_y, min_y
+    dx = 0.0 if min_x <= px <= max_x else min(abs(px - min_x), abs(px - max_x))
+    dy = 0.0 if min_y <= py <= max_y else min(abs(py - min_y), abs(py - max_y))
+    return math.hypot(dx, dy)
+
+
 def _bbox_from_points(points: List[Dict[str, float]]) -> Optional[Dict[str, Dict[str, float]]]:
     if not points:
         return None
@@ -145,16 +173,63 @@ def _line_segment_from_bbox(
     return p1, p2
 
 
+def _line_segment_from_bbox_and_origin(
+    origin: Dict[str, float],
+    bmin: Dict[str, float],
+    bmax: Dict[str, float],
+) -> Optional[Tuple[Dict[str, float], Dict[str, float]]]:
+    """Infer line endpoints from bbox corners guided by origin proximity."""
+    min_x = float(bmin["x"])
+    min_y = float(bmin["y"])
+    max_x = float(bmax["x"])
+    max_y = float(bmax["y"])
+    z = float(origin.get("z", bmin.get("z", 0.0)))
+
+    if not all(math.isfinite(v) for v in (min_x, min_y, max_x, max_y)):
+        return None
+
+    # Axis-aligned degenerate bbox: endpoints are unique.
+    if abs(max_x - min_x) <= 1e-12 or abs(max_y - min_y) <= 1e-12:
+        return (
+            {"x": min_x, "y": min_y, "z": z},
+            {"x": max_x, "y": max_y, "z": z},
+        )
+
+    c1 = {"x": min_x, "y": min_y, "z": z}
+    c2 = {"x": min_x, "y": max_y, "z": z}
+    c3 = {"x": max_x, "y": min_y, "z": z}
+    c4 = {"x": max_x, "y": max_y, "z": z}
+    candidates = [(c1, c4), (c2, c3)]
+    scored: List[Tuple[float, Tuple[Dict[str, float], Dict[str, float]]]] = []
+    for a, b in candidates:
+        dist, _, _ = _distance_to_segment(origin, a, b)
+        scored.append((dist, (a, b)))
+    scored.sort(key=lambda item: item[0])
+    if not scored:
+        return None
+    return scored[0][1]
+
+
 _NUM_RE = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 _POINT_VALUE_RE = re.compile(rf"^\[\s*({_NUM_RE})\s+({_NUM_RE})(?:\s+({_NUM_RE}))?\s*\]$")
 _LABEL_VALUE_RE = re.compile(r"^\s*(?P<label>[^.].*?)\s*(?:\.\s*){3,}(?P<value>.+?)\s*$")
 _ENTITY_START_RE = re.compile(
     r"^\s*<(?P<etype>AcDb[A-Za-z0-9_]+)>\s*(?:\.\s*)*\[(?P<handle>[0-9A-Fa-f]+)\]\s*$"
 )
+_VECTORIZE_ENTITY_START_RE = re.compile(
+    r"^\s*>*\s*Start Drawing <(?P<etype>AcDb[A-Za-z0-9_]+)>\s*(?:\.\s*)*\[(?P<handle>[0-9A-Fa-f]+)\]\s*$"
+)
+_VECTORIZE_ENTITY_END_RE = re.compile(
+    r"^\s*>*\s*End Drawing <(?P<etype>AcDb[A-Za-z0-9_]+)>\s*(?:\.\s*)*\[(?P<handle>[0-9A-Fa-f]+)\]\s*$"
+)
+_VECTORIZE_VERTEX_RE = re.compile(
+    r"^\s*Vertex\[\d+\]\s*(?:\.\s*)*\[(?P<point>[^\]]+)\]\s*$"
+)
 
 
 def _normalize_label(label: str) -> str:
-    return re.sub(r"\s+", " ", label.strip().lower())
+    normalized = re.sub(r"\s+", " ", label.strip().lower())
+    return re.sub(r"[:：]+$", "", normalized)
 
 
 def _parse_label_value(line: str) -> Tuple[Optional[str], Optional[str]]:
@@ -182,6 +257,173 @@ def _parse_float_value(value: str) -> Optional[float]:
         return None
 
 
+def _clean_oda_text_value(raw: object) -> str:
+    s = str(raw or "")
+    if s == '""':
+        return ""
+    # Remove ODA/CAD inline text controls such as \A1;
+    s = re.sub(r"\\[A-Za-z][^;]*;", "", s)
+    return s.replace("\\P", "\n").replace("\\p", "\n").strip().strip('"')
+
+
+def _dimension_line_endpoints(
+    ext1: Dict[str, float],
+    ext2: Dict[str, float],
+    dim_line_pt: Dict[str, float],
+) -> Tuple[Dict[str, float], Dict[str, float]]:
+    dx = float(ext2["x"]) - float(ext1["x"])
+    dy = float(ext2["y"]) - float(ext1["y"])
+    dn = math.hypot(dx, dy)
+    if dn <= 1e-9:
+        return dict(ext1), dict(ext2)
+    ux = dx / dn
+    uy = dy / dn
+    # Perpendicular offset from measured line to dimension line.
+    nx = -uy
+    ny = ux
+    off = (float(dim_line_pt["x"]) - float(ext1["x"])) * nx + (float(dim_line_pt["y"]) - float(ext1["y"])) * ny
+    p1 = {
+        "x": float(ext1["x"]) + nx * off,
+        "y": float(ext1["y"]) + ny * off,
+        "z": float(ext1.get("z", 0.0)),
+    }
+    p2 = {
+        "x": float(ext2["x"]) + nx * off,
+        "y": float(ext2["y"]) + ny * off,
+        "z": float(ext2.get("z", 0.0)),
+    }
+    return p1, p2
+
+
+def _arrow_marker_lines(
+    tip: Dict[str, float],
+    inward_dir: Tuple[float, float],
+    arrow_len: float,
+    arrow_half_width: float,
+) -> List[Tuple[Dict[str, float], Dict[str, float]]]:
+    ux, uy = inward_dir
+    dn = math.hypot(ux, uy)
+    if dn <= 1e-9:
+        return []
+    ux /= dn
+    uy /= dn
+    nx = -uy
+    ny = ux
+    tx = float(tip.get("x", 0.0))
+    ty = float(tip.get("y", 0.0))
+    tz = float(tip.get("z", 0.0))
+    b1 = {"x": tx + ux * arrow_len + nx * arrow_half_width, "y": ty + uy * arrow_len + ny * arrow_half_width, "z": tz}
+    b2 = {"x": tx + ux * arrow_len - nx * arrow_half_width, "y": ty + uy * arrow_len - ny * arrow_half_width, "z": tz}
+    return [(dict(tip), b1), (dict(tip), b2)]
+
+
+def _arrow_marker_triangle_points(
+    tip: Dict[str, float],
+    inward_dir: Tuple[float, float],
+    arrow_len: float,
+    arrow_half_width: float,
+) -> Optional[List[Dict[str, float]]]:
+    ux, uy = inward_dir
+    dn = math.hypot(ux, uy)
+    if dn <= 1e-9:
+        return None
+    ux /= dn
+    uy /= dn
+    nx = -uy
+    ny = ux
+    tx = float(tip.get("x", 0.0))
+    ty = float(tip.get("y", 0.0))
+    tz = float(tip.get("z", 0.0))
+    b1 = {"x": tx + ux * arrow_len + nx * arrow_half_width, "y": ty + uy * arrow_len + ny * arrow_half_width, "z": tz}
+    b2 = {"x": tx + ux * arrow_len - nx * arrow_half_width, "y": ty + uy * arrow_len - ny * arrow_half_width, "z": tz}
+    return [dict(tip), b1, b2, dict(tip)]
+
+
+def _parse_aci_from_color_name(value: object) -> Optional[int]:
+    s = str(value or "").strip()
+    if not s:
+        return None
+    sl = s.lower()
+    if sl == "bylayer":
+        return 256
+    if sl == "byblock":
+        return 0
+    if sl == "foreground":
+        # CAD foreground color is viewport dependent; use ACI 7 as a stable fallback.
+        return 7
+    m = re.search(r"aci\s*(-?\d+)", s, flags=re.IGNORECASE)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            return None
+    if re.fullmatch(r"-?\d+", s):
+        try:
+            return int(s)
+        except Exception:
+            return None
+    return None
+
+
+def _identity_affine() -> Affine2D:
+    return (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def _compose_affine(parent: Affine2D, local: Affine2D) -> Affine2D:
+    p00, p01, p10, p11, ptx, pty = parent
+    l00, l01, l10, l11, ltx, lty = local
+    return (
+        p00 * l00 + p01 * l10,
+        p00 * l01 + p01 * l11,
+        p10 * l00 + p11 * l10,
+        p10 * l01 + p11 * l11,
+        p00 * ltx + p01 * lty + ptx,
+        p10 * ltx + p11 * lty + pty,
+    )
+
+
+def _apply_affine(tf: Affine2D, p: Dict[str, float]) -> Dict[str, float]:
+    m00, m01, m10, m11, tx, ty = tf
+    x = float(p.get("x", 0.0))
+    y = float(p.get("y", 0.0))
+    return {
+        "x": m00 * x + m01 * y + tx,
+        "y": m10 * x + m11 * y + ty,
+        "z": float(p.get("z", 0.0)),
+    }
+
+
+def _apply_linear(tf: Affine2D, v: Dict[str, float]) -> Dict[str, float]:
+    m00, m01, m10, m11, _, _ = tf
+    x = float(v.get("x", 0.0))
+    y = float(v.get("y", 0.0))
+    return {"x": m00 * x + m01 * y, "y": m10 * x + m11 * y, "z": float(v.get("z", 0.0))}
+
+
+def _affine_scales(tf: Affine2D) -> Tuple[float, float]:
+    m00, m01, m10, m11, _, _ = tf
+    sx = math.hypot(m00, m10)
+    sy = math.hypot(m01, m11)
+    return sx, sy
+
+
+def _apply_bbox_affine(tf: Affine2D, bbox_obj: object) -> Optional[Dict[str, Dict[str, float]]]:
+    if not isinstance(bbox_obj, dict):
+        return None
+    bmin = bbox_obj.get("min")
+    bmax = bbox_obj.get("max")
+    if not isinstance(bmin, dict) or not isinstance(bmax, dict):
+        return None
+    corners = [
+        {"x": float(bmin.get("x", 0.0)), "y": float(bmin.get("y", 0.0)), "z": float(bmin.get("z", 0.0))},
+        {"x": float(bmin.get("x", 0.0)), "y": float(bmax.get("y", 0.0)), "z": float(bmin.get("z", 0.0))},
+        {"x": float(bmax.get("x", 0.0)), "y": float(bmin.get("y", 0.0)), "z": float(bmax.get("z", 0.0))},
+        {"x": float(bmax.get("x", 0.0)), "y": float(bmax.get("y", 0.0)), "z": float(bmax.get("z", 0.0))},
+    ]
+    mapped = [_apply_affine(tf, c) for c in corners]
+    return _bbox_from_points(mapped)
+
+
 def _space_from_block_name(block_name: str) -> Tuple[str, str, str]:
     name = block_name.strip()
     upper = name.upper()
@@ -193,6 +435,134 @@ def _space_from_block_name(block_name: str) -> Tuple[str, str, str]:
         return f"layout:{name}", display_name, "layout"
     clean = name.lstrip("*") or "Layout"
     return f"layout:{clean}", clean, "layout"
+
+
+def _block_ref_id_from_instance_path(instance_path: Tuple[str, ...]) -> Optional[str]:
+    if not instance_path:
+        return None
+    return f"BLOCK_REF@{'/'.join(instance_path)}"
+
+
+def _normalize_font_token(value: object) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    base = Path(raw).stem
+    return re.sub(r"[^a-z0-9]+", "", base)
+
+
+def _detect_font_kind(value: object) -> str:
+    ext = Path(str(value or "")).suffix.lower()
+    if ext in (".ttf", ".ttc", ".otf"):
+        return ext[1:]
+    if ext == ".shx":
+        return "shx"
+    return "unknown"
+
+
+def _font_family_from_name(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    stem = Path(raw).stem.strip()
+    return stem or raw
+
+
+def _sanitize_font_key(value: object) -> str:
+    token = _normalize_font_token(value)
+    return token or "default"
+
+
+def _normalize_entity_instance_key(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if "@" not in raw:
+        return raw.upper()
+    base_raw, path_raw = raw.split("@", 1)
+    base = base_raw.strip().upper()
+    path_parts = [seg.strip().upper() for seg in path_raw.split("/") if seg.strip()]
+    if not path_parts:
+        return base
+    return f"{base}@{'/'.join(path_parts)}"
+
+
+_SEVEN_SEG_POINTS: Dict[str, Tuple[Tuple[float, float], Tuple[float, float]]] = {
+    "a": ((0.12, 1.0), (0.88, 1.0)),
+    "b": ((0.88, 1.0), (0.88, 0.54)),
+    "c": ((0.88, 0.46), (0.88, 0.0)),
+    "d": ((0.12, 0.0), (0.88, 0.0)),
+    "e": ((0.12, 0.46), (0.12, 0.0)),
+    "f": ((0.12, 1.0), (0.12, 0.54)),
+    "g": ((0.12, 0.5), (0.88, 0.5)),
+}
+
+_SEVEN_SEG_CHAR_MAP: Dict[str, Tuple[str, ...]] = {
+    "0": ("a", "b", "c", "d", "e", "f"),
+    "1": ("b", "c"),
+    "2": ("a", "b", "g", "e", "d"),
+    "3": ("a", "b", "g", "c", "d"),
+    "4": ("f", "g", "b", "c"),
+    "5": ("a", "f", "g", "c", "d"),
+    "6": ("a", "f", "g", "e", "c", "d"),
+    "7": ("a", "b", "c"),
+    "8": ("a", "b", "c", "d", "e", "f", "g"),
+    "9": ("a", "b", "c", "d", "f", "g"),
+    "A": ("a", "b", "c", "e", "f", "g"),
+    "B": ("f", "e", "g", "c", "d"),
+    "C": ("a", "f", "e", "d"),
+    "D": ("b", "c", "d", "e", "g"),
+    "E": ("a", "f", "g", "e", "d"),
+    "F": ("a", "f", "g", "e"),
+    "H": ("f", "e", "g", "b", "c"),
+    "J": ("b", "c", "d", "e"),
+    "L": ("f", "e", "d"),
+    "P": ("a", "f", "b", "g", "e"),
+    "U": ("f", "e", "d", "c", "b"),
+    "Y": ("f", "b", "g", "c", "d"),
+}
+
+_STROKE_GLYPHS: Dict[str, List[List[Tuple[float, float]]]] = {
+    ".": [[(0.5, 0.06), (0.52, 0.08)]],
+    ",": [[(0.5, 0.06), (0.45, -0.08)]],
+    "-": [[(0.2, 0.5), (0.8, 0.5)]],
+    "_": [[(0.1, 0.0), (0.9, 0.0)]],
+    "/": [[(0.1, 0.0), (0.9, 1.0)]],
+    "\\": [[(0.1, 1.0), (0.9, 0.0)]],
+    ":": [[(0.5, 0.22), (0.52, 0.24)], [(0.5, 0.78), (0.52, 0.8)]],
+    "+": [[(0.15, 0.5), (0.85, 0.5)], [(0.5, 0.15), (0.5, 0.85)]],
+    "*": [[(0.15, 0.5), (0.85, 0.5)], [(0.26, 0.2), (0.74, 0.8)], [(0.26, 0.8), (0.74, 0.2)]],
+    "=": [[(0.18, 0.62), (0.82, 0.62)], [(0.18, 0.38), (0.82, 0.38)]],
+    "(": [[(0.64, 1.0), (0.4, 0.76), (0.32, 0.5), (0.4, 0.24), (0.64, 0.0)]],
+    ")": [[(0.36, 1.0), (0.6, 0.76), (0.68, 0.5), (0.6, 0.24), (0.36, 0.0)]],
+    "[": [[(0.62, 1.0), (0.38, 1.0), (0.38, 0.0), (0.62, 0.0)]],
+    "]": [[(0.38, 1.0), (0.62, 1.0), (0.62, 0.0), (0.38, 0.0)]],
+    "%": [[(0.2, 0.0), (0.8, 1.0)], [(0.24, 0.86), (0.34, 0.96)], [(0.66, 0.04), (0.76, 0.14)]],
+    "N": [[(0.12, 0.0), (0.12, 1.0)], [(0.12, 1.0), (0.88, 0.0)], [(0.88, 0.0), (0.88, 1.0)]],
+    "M": [[(0.12, 0.0), (0.12, 1.0)], [(0.12, 1.0), (0.5, 0.48)], [(0.5, 0.48), (0.88, 1.0)], [(0.88, 1.0), (0.88, 0.0)]],
+    "R": [[(0.12, 0.0), (0.12, 1.0)], [(0.12, 1.0), (0.78, 1.0), (0.88, 0.86), (0.88, 0.62), (0.78, 0.5), (0.12, 0.5)], [(0.5, 0.5), (0.9, 0.0)]],
+    "K": [[(0.12, 0.0), (0.12, 1.0)], [(0.86, 1.0), (0.12, 0.5), (0.86, 0.0)]],
+    "T": [[(0.1, 1.0), (0.9, 1.0)], [(0.5, 1.0), (0.5, 0.0)]],
+    "V": [[(0.12, 1.0), (0.5, 0.0), (0.88, 1.0)]],
+    "W": [[(0.1, 1.0), (0.26, 0.0), (0.5, 0.58), (0.74, 0.0), (0.9, 1.0)]],
+    "X": [[(0.12, 1.0), (0.88, 0.0)], [(0.88, 1.0), (0.12, 0.0)]],
+    "Z": [[(0.12, 1.0), (0.88, 1.0), (0.12, 0.0), (0.88, 0.0)]],
+    "?": [[(0.15, 0.8), (0.25, 1.0), (0.75, 1.0), (0.85, 0.8), (0.85, 0.62), (0.5, 0.42), (0.5, 0.26)], [(0.5, 0.08), (0.52, 0.1)]],
+}
+
+
+def _shx_char_strokes(ch: str) -> Optional[List[List[Tuple[float, float]]]]:
+    if ch == " ":
+        return []
+    if ch in _STROKE_GLYPHS:
+        return _STROKE_GLYPHS[ch]
+    upper = ch.upper()
+    if upper in _STROKE_GLYPHS:
+        return _STROKE_GLYPHS[upper]
+    segs = _SEVEN_SEG_CHAR_MAP.get(ch) or _SEVEN_SEG_CHAR_MAP.get(upper)
+    if segs:
+        return [[_SEVEN_SEG_POINTS[s][0], _SEVEN_SEG_POINTS[s][1]] for s in segs if s in _SEVEN_SEG_POINTS]
+    return None
 
 
 class ExternalCoreError(RuntimeError):
@@ -216,7 +586,12 @@ class DwgDocSession:
     )
     spaces: List[Dict[str, object]] = field(default_factory=list)
     entities_by_space: Dict[str, List[Dict[str, object]]] = field(default_factory=dict)
+    block_refs_by_space: Dict[str, List[Dict[str, object]]] = field(default_factory=dict)
+    text_styles: Dict[str, Dict[str, object]] = field(default_factory=dict)
+    font_files: Dict[str, str] = field(default_factory=dict)
+    shx_fallback_hit_count: int = 0
     warnings: List[str] = field(default_factory=list)
+    shx_outline_mode: str = "none"
     remote_doc_id: Optional[str] = None
 
 
@@ -241,14 +616,29 @@ class DwgServiceCore:
             explicit_prefix = f"/{explicit_prefix}"
 
         self.oda_timeout_sec = max(5.0, float(os.environ.get("DWG_ODA_TIMEOUT_SEC", "60")))
-        self.max_entities_per_space = max(500, int(os.environ.get("DWG_ODA_MAX_ENTITIES_PER_SPACE", "25000")))
+        self.max_entities_per_space = max(500, int(os.environ.get("DWG_ODA_MAX_ENTITIES_PER_SPACE", "120000")))
         self.default_entity_api_limit = max(200, int(os.environ.get("DWG_ENTITY_API_DEFAULT_LIMIT", "6000")))
+        self.vectorize_cache_capacity = max(2, int(os.environ.get("DWG_VECTORIZE_CACHE_CAPACITY", "8")))
         self.oda_profile = os.environ.get("ODA_PROFILE", "").strip() or ("win-x64" if os.name == "nt" else "linux-x64")
         self.oda_version = os.environ.get("ODA_VERSION", "").strip() or "2026.03.25-v1"
         self.oda_runtime_root: Optional[str] = None
         self.oda_runtime_in_project = False
         self.oda_resolve_source: Optional[str] = None
         self.oda_read_exe = self._resolve_oda_read_exe(os.environ.get("ODA_READ_EXE", "").strip())
+        self.enable_shx_outline = os.environ.get("DWG_ENABLE_SHX_OUTLINE", "1").strip().lower() not in ("0", "false", "no")
+        self.enable_shx_outline_oda = os.environ.get("DWG_ENABLE_SHX_OUTLINE_ODA", "1").strip().lower() not in ("0", "false", "no")
+        self.force_text_vectorize = os.environ.get("DWG_FORCE_TEXT_VECTORIZE", "0").strip().lower() in ("1", "true", "yes")
+        self.oda_vectorize_resolve_source: Optional[str] = None
+        self.oda_vectorize_exe = self._resolve_oda_vectorize_exe(os.environ.get("ODA_VECTORIZE_EXE", "").strip())
+        self.font_dir = Path(os.environ.get("DWG_FONT_DIR", str((self.server_dir / "fonts").resolve()))).resolve()
+        self.font_map_path = Path(
+            os.environ.get("DWG_FONT_MAP_PATH", str((self.font_dir / "font-map.json").resolve()))
+        ).resolve()
+        self.font_map = self._load_font_map(self.font_map_path)
+        self.font_search_roots = self._build_font_search_roots()
+        self.shx_fallback_file = (self.font_dir / "@!hztxt万能字体.shx").resolve()
+        self._vectorize_text_cache: Dict[str, Dict[str, List[Dict[str, object]]]] = {}
+        self._vectorize_cache_order: List[str] = []
 
         if self.external_base_url:
             self.mode = "external_http"
@@ -334,7 +724,162 @@ class DwgServiceCore:
                 continue
         return None
 
+    def _resolve_oda_vectorize_exe(self, env_path: str) -> Optional[str]:
+        candidates: List[Tuple[Path, str]] = []
+
+        if env_path:
+            candidates.append((Path(env_path), "env:ODA_VECTORIZE_EXE"))
+
+        if self.oda_read_exe:
+            read_path = Path(self.oda_read_exe)
+            candidates.extend(
+                [
+                    (read_path.with_name("OdVectorizeEx.exe"), "co_located_with_read"),
+                    (read_path.with_name("OdVectorizeEx"), "co_located_with_read"),
+                ]
+            )
+
+        if self.oda_runtime_root:
+            root = Path(self.oda_runtime_root)
+            candidates.extend(
+                [
+                    (root / "bin" / "OdVectorizeEx.exe", "runtime_root"),
+                    (root / "bin" / "OdVectorizeEx", "runtime_root"),
+                    (root / "OdVectorizeEx.exe", "runtime_root"),
+                    (root / "OdVectorizeEx", "runtime_root"),
+                ]
+            )
+
+        which_hit = shutil.which("OdVectorizeEx")
+        if which_hit:
+            candidates.append((Path(which_hit), "system_path"))
+        which_hit_exe = shutil.which("OdVectorizeEx.exe")
+        if which_hit_exe:
+            candidates.append((Path(which_hit_exe), "system_path"))
+
+        candidates.extend(
+            [
+                (Path(r"C:\development\oda\ConvertApp\lib\ODA\OdVectorizeEx.exe"), "legacy_fallback"),
+                (Path("/opt/oda/bin/OdVectorizeEx"), "legacy_fallback"),
+            ]
+        )
+
+        for candidate, source in candidates:
+            try:
+                if candidate.exists():
+                    resolved = candidate.resolve()
+                    self.oda_vectorize_resolve_source = source
+                    return str(resolved)
+            except Exception:
+                continue
+        return None
+
+    def _build_font_search_roots(self) -> List[Path]:
+        roots: List[Path] = []
+        raw_roots = os.environ.get("DWG_FONT_DIRS", "").strip()
+        if raw_roots:
+            for part in raw_roots.split(os.pathsep):
+                candidate = part.strip()
+                if candidate:
+                    roots.append(Path(candidate).resolve())
+        roots.append(self.font_dir)
+        if os.name == "nt":
+            roots.append(Path(r"C:\Windows\Fonts"))
+        else:
+            roots.append(Path("/usr/share/fonts"))
+            roots.append(Path("/usr/local/share/fonts"))
+
+        deduped: List[Path] = []
+        seen: Set[str] = set()
+        for root in roots:
+            key = str(root).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(root)
+        return deduped
+
+    def _load_font_map(self, map_path: Path) -> Dict[str, str]:
+        out: Dict[str, str] = {}
+        if not map_path.exists():
+            return out
+        try:
+            raw = json.loads(map_path.read_text(encoding="utf-8"))
+        except Exception:
+            return out
+        if not isinstance(raw, dict):
+            return out
+
+        def put_item(key_raw: object, value_raw: object) -> None:
+            key = _normalize_font_token(key_raw)
+            if not key:
+                return
+            if isinstance(value_raw, dict):
+                value = str(
+                    value_raw.get("path")
+                    or value_raw.get("file")
+                    or value_raw.get("font_path")
+                    or value_raw.get("font_file")
+                    or ""
+                ).strip()
+            else:
+                value = str(value_raw or "").strip()
+            if not value:
+                return
+            out[key] = value
+
+        for k, v in raw.items():
+            if isinstance(v, dict) and "path" not in v and "file" not in v and "font_path" not in v and "font_file" not in v:
+                for child_k, child_v in v.items():
+                    put_item(child_k, child_v)
+            else:
+                put_item(k, v)
+        return out
+
+    def _resolve_font_file(self, font_hint: object) -> Optional[Path]:
+        hint = str(font_hint or "").strip()
+        if not hint:
+            return None
+        hint_path = Path(hint)
+        candidates: List[Path] = []
+        if hint_path.is_absolute():
+            candidates.append(hint_path)
+        key = _normalize_font_token(hint)
+        mapped = self.font_map.get(key)
+        if mapped:
+            candidates.append(Path(mapped))
+
+        name_only = hint_path.name if hint_path.name else hint
+        stem = hint_path.stem or hint
+        ext = hint_path.suffix.lower()
+        for root in self.font_search_roots:
+            candidates.append(root / name_only)
+            if not ext:
+                candidates.append(root / f"{stem}.ttf")
+                candidates.append(root / f"{stem}.ttc")
+                candidates.append(root / f"{stem}.otf")
+
+        seen: Set[str] = set()
+        for candidate in candidates:
+            try:
+                key_path = str(candidate).lower()
+                if key_path in seen:
+                    continue
+                seen.add(key_path)
+                if candidate.exists() and candidate.is_file():
+                    return candidate.resolve()
+            except Exception:
+                continue
+        return None
+
     def _decode_oda_bytes(self, data: bytes) -> str:
+        if not data:
+            return ""
+        if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
+            try:
+                return data.decode("utf-16")
+            except Exception:
+                pass
         for enc in ("utf-8", "gb18030", "gbk", "latin-1"):
             try:
                 return data.decode(enc)
@@ -381,6 +926,511 @@ class DwgServiceCore:
             raise ExternalCoreError("OdReadEx returned empty output")
         return stdout_text
 
+    def _is_oda_vectorize_available(self) -> bool:
+        if not self.enable_shx_outline or not self.enable_shx_outline_oda:
+            return False
+        if not self.oda_vectorize_exe:
+            return False
+        try:
+            return Path(self.oda_vectorize_exe).exists()
+        except Exception:
+            return False
+
+    def _run_oda_vectorize_dump(self, file_path: Path) -> str:
+        if not self.oda_vectorize_exe:
+            raise ExternalCoreError("OdVectorizeEx executable is not configured/found")
+
+        exe_path = Path(self.oda_vectorize_exe)
+        env = os.environ.copy()
+        exe_dir = str(exe_path.parent)
+        env["PATH"] = exe_dir + os.pathsep + env.get("PATH", "")
+
+        target_file = str(file_path.resolve())
+        cmd = [str(exe_path), target_file]
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=self.oda_timeout_sec,
+                env=env,
+                cwd=exe_dir,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ExternalCoreError(f"OdVectorizeEx timed out after {self.oda_timeout_sec:.1f}s for {file_path.name}") from exc
+        except Exception as exc:
+            raise ExternalCoreError(f"failed to launch OdVectorizeEx: {exc}") from exc
+
+        stdout_text = self._decode_oda_bytes(proc.stdout or b"")
+        stderr_text = self._decode_oda_bytes(proc.stderr or b"")
+        if proc.returncode != 0:
+            detail = stderr_text.strip() or stdout_text[:3000].strip()
+            raise ExternalCoreError(f"OdVectorizeEx failed (code={proc.returncode}): {detail}")
+
+        if "Can't open file:" in stdout_text:
+            raise ExternalCoreError(stdout_text.strip())
+
+        if not stdout_text.strip():
+            raise ExternalCoreError("OdVectorizeEx returned empty output")
+        return stdout_text
+
+    def _vectorize_cache_key(self, file_path: Path) -> str:
+        p = file_path.resolve()
+        try:
+            stat = p.stat()
+            return f"{p}|{int(stat.st_size)}|{int(getattr(stat, 'st_mtime_ns', int(stat.st_mtime * 1e9)))}"
+        except Exception:
+            return str(p)
+
+    def _vectorize_cache_get(self, cache_key: str) -> Optional[Dict[str, List[Dict[str, object]]]]:
+        hit = self._vectorize_text_cache.get(cache_key)
+        if hit is None:
+            return None
+        try:
+            self._vectorize_cache_order.remove(cache_key)
+        except ValueError:
+            pass
+        self._vectorize_cache_order.append(cache_key)
+        return hit
+
+    def _vectorize_cache_put(self, cache_key: str, data: Dict[str, List[Dict[str, object]]]) -> None:
+        self._vectorize_text_cache[cache_key] = data
+        try:
+            self._vectorize_cache_order.remove(cache_key)
+        except ValueError:
+            pass
+        self._vectorize_cache_order.append(cache_key)
+        while len(self._vectorize_cache_order) > self.vectorize_cache_capacity:
+            stale = self._vectorize_cache_order.pop(0)
+            self._vectorize_text_cache.pop(stale, None)
+
+    def _outline_point_key(self, p: Dict[str, float], eps: float = 1e-4) -> Tuple[int, int]:
+        return (int(round(float(p.get("x", 0.0)) / eps)), int(round(float(p.get("y", 0.0)) / eps)))
+
+    def _clean_polyline_points(self, points: List[Dict[str, float]], closed: bool) -> List[Dict[str, float]]:
+        out: List[Dict[str, float]] = []
+        for p in points:
+            if not isinstance(p, dict):
+                continue
+            q = {"x": float(p.get("x", 0.0)), "y": float(p.get("y", 0.0)), "z": float(p.get("z", 0.0))}
+            if out and _point_distance(out[-1], q) <= 1e-7:
+                continue
+            out.append(q)
+        if closed and len(out) >= 3 and _point_distance(out[0], out[-1]) > 1e-6:
+            out.append(dict(out[0]))
+        if closed and len(out) >= 2 and _point_distance(out[0], out[-1]) <= 1e-9 and len(out) == 2:
+            return []
+        return out
+
+    def _polygon_abs_area(self, ring: List[Dict[str, float]]) -> float:
+        if len(ring) < 3:
+            return 0.0
+        area2 = 0.0
+        pts = ring
+        for i in range(len(pts) - 1):
+            x1 = float(pts[i]["x"])
+            y1 = float(pts[i]["y"])
+            x2 = float(pts[i + 1]["x"])
+            y2 = float(pts[i + 1]["y"])
+            area2 += x1 * y2 - x2 * y1
+        return abs(area2) * 0.5
+
+    def _triangle_mesh_to_boundary_loops(self, triangles: List[List[Dict[str, float]]]) -> List[List[Dict[str, float]]]:
+        # Convert triangulated text fill to boundary loops to reduce primitive count.
+        canonical_point: Dict[Tuple[int, int], Dict[str, float]] = {}
+        edge_count: Dict[Tuple[Tuple[int, int], Tuple[int, int]], int] = {}
+
+        for tri in triangles:
+            clean = self._clean_polyline_points(tri, closed=False)
+            if len(clean) < 3:
+                continue
+            tri_pts = clean[:3]
+            keys = [self._outline_point_key(p) for p in tri_pts]
+            if len({keys[0], keys[1], keys[2]}) < 3:
+                continue
+            for k, p in zip(keys, tri_pts):
+                if k not in canonical_point:
+                    canonical_point[k] = dict(p)
+            tri_edges = [(keys[0], keys[1]), (keys[1], keys[2]), (keys[2], keys[0])]
+            for a, b in tri_edges:
+                edge = (a, b) if a <= b else (b, a)
+                edge_count[edge] = edge_count.get(edge, 0) + 1
+
+        boundary_edges = [e for e, c in edge_count.items() if c == 1]
+        if not boundary_edges:
+            return []
+
+        adjacency: Dict[Tuple[int, int], Set[Tuple[int, int]]] = {}
+        for a, b in boundary_edges:
+            adjacency.setdefault(a, set()).add(b)
+            adjacency.setdefault(b, set()).add(a)
+
+        unused: Set[Tuple[Tuple[int, int], Tuple[int, int]]] = set(boundary_edges)
+        loops: List[List[Dict[str, float]]] = []
+
+        def pop_edge_key(a: Tuple[int, int], b: Tuple[int, int]) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+            k = (a, b) if a <= b else (b, a)
+            if k in unused:
+                unused.remove(k)
+                return k
+            return None
+
+        while unused:
+            start_edge = next(iter(unused))
+            unused.remove(start_edge)
+            start, curr = start_edge
+            prev = start
+            chain: List[Tuple[int, int]] = [start, curr]
+
+            guard = 0
+            while guard < 200000:
+                guard += 1
+                if curr == start:
+                    break
+                neigh = adjacency.get(curr, set())
+                candidates = [n for n in neigh if n != prev and ((curr, n) if curr <= n else (n, curr)) in unused]
+                if not candidates:
+                    fallback = [n for n in neigh if ((curr, n) if curr <= n else (n, curr)) in unused]
+                    if not fallback:
+                        break
+                    nxt = fallback[0]
+                else:
+                    nxt = candidates[0]
+                if pop_edge_key(curr, nxt) is None:
+                    break
+                chain.append(nxt)
+                prev, curr = curr, nxt
+                if curr == start:
+                    break
+
+            if len(chain) < 4:
+                continue
+            if chain[0] != chain[-1]:
+                chain.append(chain[0])
+            loop_points: List[Dict[str, float]] = []
+            for k in chain:
+                p = canonical_point.get(k)
+                if not p:
+                    continue
+                loop_points.append(dict(p))
+            loop_points = self._clean_polyline_points(loop_points, closed=True)
+            if len(loop_points) < 4:
+                continue
+            if self._polygon_abs_area(loop_points) <= 1e-4:
+                continue
+            loops.append(loop_points)
+
+        return loops
+
+    def _optimize_oda_text_outlines(self, primitives: List[Dict[str, object]]) -> List[Dict[str, object]]:
+        if not primitives:
+            return []
+
+        triangles: List[List[Dict[str, float]]] = []
+        passthrough: List[Dict[str, object]] = []
+
+        for prim in primitives:
+            if not isinstance(prim, dict):
+                continue
+            kind = str(prim.get("kind", "")).lower()
+            if kind == "polygon":
+                rings = prim.get("rings")
+                if not isinstance(rings, list) or not rings:
+                    continue
+                ring0 = rings[0]
+                if isinstance(ring0, list):
+                    clean = self._clean_polyline_points([p for p in ring0 if isinstance(p, dict)], closed=True)
+                    # Triangulated glyph shells usually arrive as many 3-point polygons (+ closing point).
+                    unique_count = len({self._outline_point_key(p) for p in clean[:-1]}) if len(clean) >= 2 else 0
+                    if unique_count == 3:
+                        triangles.append(clean)
+                        continue
+            if kind == "polyline":
+                points = prim.get("points")
+                if isinstance(points, list):
+                    clean_points = self._clean_polyline_points([p for p in points if isinstance(p, dict)], closed=bool(prim.get("closed", False)))
+                    if len(clean_points) >= 2:
+                        copy_prim = dict(prim)
+                        copy_prim["points"] = clean_points
+                        copy_prim["closed"] = bool(prim.get("closed", False))
+                        passthrough.append(copy_prim)
+                    continue
+            passthrough.append(dict(prim))
+
+        optimized: List[Dict[str, object]] = []
+        optimized.extend(passthrough)
+
+        if len(triangles) >= 12:
+            loops = self._triangle_mesh_to_boundary_loops(triangles)
+            if loops:
+                for loop in loops:
+                    optimized.append(
+                        {
+                            "kind": "polyline",
+                            "points": loop,
+                            "closed": True,
+                            "subtype": "shx_outline_oda_boundary",
+                        }
+                    )
+                return optimized
+
+        # Fallback: keep the original triangles when loop reconstruction is unavailable.
+        for tri in triangles:
+            if len(tri) >= 4:
+                optimized.append(
+                    {
+                        "kind": "polygon",
+                        "rings": [tri],
+                        "filled": True,
+                        "pattern_name": "TEXT_OUTLINE",
+                        "subtype": "shx_outline_oda",
+                    }
+                )
+        return optimized
+
+    def _parse_vectorize_vertex(self, line: str) -> Optional[Dict[str, float]]:
+        m = _VECTORIZE_VERTEX_RE.match(line)
+        if not m:
+            return None
+        raw = m.group("point").strip()
+        parts = [p for p in re.split(r"\s+", raw) if p]
+        if len(parts) < 2:
+            return None
+        try:
+            x = float(parts[0])
+            y = float(parts[1])
+            z = float(parts[2]) if len(parts) >= 3 else 0.0
+        except Exception:
+            return None
+        return {"x": x, "y": y, "z": z}
+
+    def _parse_oda_vectorize_text_primitives(self, dump_text: str) -> Dict[str, List[Dict[str, object]]]:
+        result: Dict[str, List[Dict[str, object]]] = {}
+        entity_stack: List[Tuple[str, str]] = []
+        block_ref_stack: List[str] = []
+        text_ctx_stack: List[Dict[str, object]] = []
+        capture_kind: Optional[str] = None
+        capture_points: List[Dict[str, float]] = []
+
+        def flush_capture() -> None:
+            nonlocal capture_kind, capture_points
+            if not capture_kind or not text_ctx_stack:
+                capture_kind = None
+                capture_points = []
+                return
+            ctx = text_ctx_stack[-1]
+            primitives = ctx.get("primitives")
+            if not isinstance(primitives, list):
+                primitives = []
+                ctx["primitives"] = primitives
+            shape_file = bool(ctx.get("shape_file", False))
+
+            if capture_kind == "polygon":
+                if len(capture_points) >= 3:
+                    ring = [dict(p) for p in capture_points]
+                    if _point_distance(ring[0], ring[-1]) > 1e-6:
+                        ring.append(dict(ring[0]))
+                    primitives.append(
+                        {
+                            "kind": "polygon",
+                            "rings": [ring],
+                            "filled": True,
+                            "pattern_name": "TEXT_OUTLINE",
+                            "subtype": "shx_outline_oda",
+                            "shape_file_text": shape_file,
+                        }
+                    )
+            elif capture_kind == "polyline":
+                if len(capture_points) >= 2:
+                    points = [dict(p) for p in capture_points]
+                    closed = len(points) >= 3 and _point_distance(points[0], points[-1]) <= 1e-6
+                    primitives.append(
+                        {
+                            "kind": "polyline",
+                            "points": points,
+                            "closed": closed,
+                            "subtype": "shx_outline_oda",
+                            "shape_file_text": shape_file,
+                        }
+                    )
+
+            capture_kind = None
+            capture_points = []
+
+        def finalize_text_ctx() -> None:
+            if not text_ctx_stack:
+                return
+            flush_capture()
+            ctx = text_ctx_stack.pop()
+            key = _normalize_entity_instance_key(ctx.get("key"))
+            if not key:
+                return
+            primitives = ctx.get("primitives")
+            if not isinstance(primitives, list):
+                return
+            clean = [p for p in primitives if isinstance(p, dict)]
+            if not clean:
+                return
+            shape_file = bool(ctx.get("shape_file", False))
+            optimized = self._optimize_oda_text_outlines(clean)
+            if shape_file:
+                for prim in optimized:
+                    if isinstance(prim, dict):
+                        prim["shape_file_text"] = True
+            bucket = result.setdefault(key, [])
+            bucket.extend([p for p in optimized if isinstance(p, dict)])
+
+        for raw in dump_text.splitlines():
+            line = raw.rstrip()
+
+            if capture_kind:
+                if capture_kind == "polygon" and "End polygonOut" in line:
+                    flush_capture()
+                    continue
+                if capture_kind == "polyline" and "End polylineOut" in line:
+                    flush_capture()
+                    continue
+                pt = self._parse_vectorize_vertex(line)
+                if pt is not None:
+                    capture_points.append(pt)
+                    continue
+
+            if text_ctx_stack:
+                if "Start polygonOut" in line:
+                    flush_capture()
+                    capture_kind = "polygon"
+                    capture_points = []
+                    continue
+                if "Start polylineOut" in line:
+                    flush_capture()
+                    capture_kind = "polyline"
+                    capture_points = []
+                    continue
+
+            m_start = _VECTORIZE_ENTITY_START_RE.match(line)
+            if m_start:
+                etype = m_start.group("etype").upper()
+                handle = m_start.group("handle").upper()
+                entity_stack.append((etype, handle))
+                if etype == "ACDBBLOCKREFERENCE":
+                    block_ref_stack.append(handle)
+                if etype in ("ACDBTEXT", "ACDBMTEXT"):
+                    instance_id = handle
+                    if block_ref_stack:
+                        instance_id = f"{handle}@{'/'.join(block_ref_stack)}"
+                    text_ctx_stack.append({"key": instance_id, "primitives": [], "shape_file": False})
+                continue
+
+            if text_ctx_stack and not capture_kind:
+                label, value = _parse_label_value(line)
+                if label == "shape file" and value is not None:
+                    text_ctx_stack[-1]["shape_file"] = str(value).strip().lower() == "true"
+                    continue
+
+            m_end = _VECTORIZE_ENTITY_END_RE.match(line)
+            if m_end:
+                end_etype = m_end.group("etype").upper()
+                end_handle = m_end.group("handle").upper()
+                while entity_stack:
+                    popped_etype, popped_handle = entity_stack.pop()
+                    if popped_etype in ("ACDBTEXT", "ACDBMTEXT"):
+                        finalize_text_ctx()
+                    if popped_etype == "ACDBBLOCKREFERENCE" and block_ref_stack:
+                        block_ref_stack.pop()
+                    if popped_etype == end_etype and popped_handle == end_handle:
+                        break
+                continue
+
+        flush_capture()
+        while text_ctx_stack:
+            finalize_text_ctx()
+
+        return result
+
+    def _has_shx_text_entities(self, entities_by_space: Dict[str, List[Dict[str, object]]]) -> bool:
+        for entities in entities_by_space.values():
+            for ent in entities:
+                if str(ent.get("type", "")).upper() != "TEXT":
+                    continue
+                geom = ent.get("geom")
+                if not isinstance(geom, dict):
+                    continue
+                if str(geom.get("font_kind", "")).strip().lower() == "shx":
+                    return True
+        return False
+
+    def _has_text_entities(self, entities_by_space: Dict[str, List[Dict[str, object]]]) -> bool:
+        for entities in entities_by_space.values():
+            for ent in entities:
+                if str(ent.get("type", "")).upper() == "TEXT":
+                    return True
+        return False
+
+    def _has_shx_style_hints(self, text_styles: Dict[str, Dict[str, object]]) -> bool:
+        for rec in text_styles.values():
+            if not isinstance(rec, dict):
+                continue
+            if bool(rec.get("shape_file", False)):
+                return True
+            if str(rec.get("font_kind", "")).strip().lower() == "shx":
+                return True
+            if _detect_font_kind(rec.get("bigfont_name")) == "shx":
+                return True
+        return False
+
+    def _attach_oda_vectorized_text_primitives(
+        self,
+        entities_by_space: Dict[str, List[Dict[str, object]]],
+        text_primitives: Dict[str, List[Dict[str, object]]],
+    ) -> int:
+        if not text_primitives:
+            return 0
+        attached = 0
+        for entities in entities_by_space.values():
+            for ent in entities:
+                if str(ent.get("type", "")).upper() != "TEXT":
+                    continue
+                geom = ent.get("geom")
+                if not isinstance(geom, dict):
+                    continue
+
+                ent_id = str(ent.get("id", "")).strip()
+                base_id = ent_id.split("@", 1)[0].strip() if ent_id else ""
+                handle_raw = str(ent.get("handle", "")).strip()
+                if not handle_raw:
+                    handle_raw = base_id
+
+                candidate_keys = [
+                    _normalize_entity_instance_key(ent_id),
+                    _normalize_entity_instance_key(base_id),
+                    _normalize_entity_instance_key(handle_raw),
+                ]
+
+                resolved: Optional[List[Dict[str, object]]] = None
+                for key in candidate_keys:
+                    if not key:
+                        continue
+                    hit = text_primitives.get(key)
+                    if isinstance(hit, list) and hit:
+                        resolved = hit
+                        break
+                if not resolved:
+                    continue
+                font_kind = str(geom.get("font_kind", "")).strip().lower()
+                shape_file_text = any(bool(p.get("shape_file_text")) for p in resolved if isinstance(p, dict))
+                if font_kind != "shx" and not shape_file_text:
+                    continue
+
+                geom_out = dict(geom)
+                geom_out["oda_outline_primitives"] = [p for p in resolved if isinstance(p, dict)]
+                geom_out["shx_outline_mode"] = "oda_vectorize"
+                if shape_file_text and font_kind != "shx":
+                    geom_out["font_kind"] = "shx"
+                ent["geom"] = geom_out
+                attached += 1
+        return attached
+
     def _build_entity_from_oda(
         self,
         etype: str,
@@ -388,6 +1438,8 @@ class DwgServiceCore:
         lines: List[str],
         space_id: str,
     ) -> Optional[Dict[str, object]]:
+        is_block_reference = etype.lower() == "acdbblockreference"
+        blockref_has_position = False
         layer = "0"
         min_pt: Optional[Dict[str, float]] = None
         max_pt: Optional[Dict[str, float]] = None
@@ -400,13 +1452,70 @@ class DwgServiceCore:
         start_angle: Optional[float] = None
         end_angle: Optional[float] = None
         vertices: List[Dict[str, float]] = []
+        vertex_segment_kinds: List[str] = []
+        current_vertex_segment_kind: Optional[str] = None
+        block_name: Optional[str] = None
+        scale_factors: Optional[Dict[str, float]] = None
+        rotation_deg: Optional[float] = None
+        text_string: Optional[str] = None
+        text_height: Optional[float] = None
+        text_width: Optional[float] = None
+        major_axis_vec: Optional[Dict[str, float]] = None
+        minor_axis_vec: Optional[Dict[str, float]] = None
+        major_radius: Optional[float] = None
+        minor_radius: Optional[float] = None
+        spline_points: List[Dict[str, float]] = []
+        color_index: Optional[int] = None
+        color_name: Optional[str] = None
+        linetype_name: Optional[str] = None
+        lineweight_name: Optional[str] = None
+        text_style_name: Optional[str] = None
+        width_factor: Optional[float] = None
+        oblique_angle: Optional[float] = None
+        horizontal_mode: Optional[str] = None
+        vertical_mode: Optional[str] = None
+        attachment_mode: Optional[str] = None
+        actual_height: Optional[float] = None
+        mirrored_x: Optional[bool] = None
+        mirrored_y: Optional[bool] = None
+        poly_closed_flag: Optional[bool] = None
+        poly_closed_seen = False
+        named_points: Dict[str, Dict[str, float]] = {}
+
+        hatch_pattern_name: Optional[str] = None
+        hatch_solid_fill = False
+        hatch_loops: List[Dict[str, object]] = []
+        hatch_current_loop: Optional[Dict[str, object]] = None
+        hatch_current_edge_start: Optional[Dict[str, float]] = None
+        dimension_line_point: Optional[Dict[str, float]] = None
+        ext_line1_point: Optional[Dict[str, float]] = None
+        ext_line2_point: Optional[Dict[str, float]] = None
+        dimension_measurement: Optional[float] = None
+        formatted_measurement: Optional[str] = None
+        text_position_point: Optional[Dict[str, float]] = None
+        text_rotation_deg: Optional[float] = None
+        leader_has_arrowhead = False
+        leader_splined = False
 
         expect_vertex_point = False
 
         for raw in lines:
             stripped = raw.strip()
+            if etype.lower() == "acdbblockreference" and stripped.startswith("<AcDb") and not stripped.startswith("<AcDbBlockReference"):
+                # Stop at nested entities (e.g. AcDbAttribute) to avoid picking child fields as INSERT transform.
+                break
             if stripped.lower().startswith("vertex "):
+                inline_label, inline_value = _parse_label_value(raw)
+                if inline_label and inline_value is not None:
+                    inline_pt = _parse_point_value(inline_value)
+                    if inline_pt is not None:
+                        vertices.append(inline_pt)
+                        vertex_segment_kinds.append((current_vertex_segment_kind or "").strip())
+                        expect_vertex_point = False
+                        current_vertex_segment_kind = None
+                        continue
                 expect_vertex_point = True
+                current_vertex_segment_kind = None
                 continue
 
             label, value = _parse_label_value(raw)
@@ -417,11 +1526,54 @@ class DwgServiceCore:
                 pt = _parse_point_value(value)
                 if pt is not None:
                     vertices.append(pt)
+                    vertex_segment_kinds.append((current_vertex_segment_kind or "").strip())
                     expect_vertex_point = False
+                    current_vertex_segment_kind = None
+                continue
+            if expect_vertex_point and label == "segment type":
+                current_vertex_segment_kind = value
                 continue
 
             if label == "layer":
                 layer = value
+                continue
+            if label == "dimension line point":
+                dimension_line_point = _parse_point_value(value)
+                continue
+            if label == "extension line 1 point":
+                ext_line1_point = _parse_point_value(value)
+                continue
+            if label == "extension line 2 point":
+                ext_line2_point = _parse_point_value(value)
+                continue
+            if label == "measurement":
+                dimension_measurement = _parse_float_value(value)
+                continue
+            if label == "formatted measurement":
+                formatted_measurement = value
+                continue
+            if label == "text rotation":
+                text_rotation_deg = _parse_float_value(value)
+                continue
+            if label == "has arrowhead":
+                leader_has_arrowhead = value.strip().lower() == "true"
+                continue
+            if label == "splined":
+                leader_splined = value.strip().lower() == "true"
+                continue
+            if etype.lower() == "acdbhatch" and label.startswith("loop "):
+                hatch_current_loop = {"kind": value, "points": [], "closed": True}
+                hatch_loops.append(hatch_current_loop)
+                hatch_current_edge_start = None
+                continue
+            if etype.lower() == "acdbhatch" and label.startswith("edge "):
+                hatch_current_edge_start = None
+                continue
+            if etype.lower() == "acdbhatch" and label == "pattern name":
+                hatch_pattern_name = value
+                continue
+            if etype.lower() == "acdbhatch" and label == "solid fill":
+                hatch_solid_fill = value.strip().lower() == "true"
                 continue
             if label == "min extents":
                 min_pt = _parse_point_value(value)
@@ -430,7 +1582,14 @@ class DwgServiceCore:
                 max_pt = _parse_point_value(value)
                 continue
             if label == "origin":
-                origin_pt = _parse_point_value(value)
+                parsed_origin = _parse_point_value(value)
+                if parsed_origin is None:
+                    continue
+                # AcDbBlockReference may contain an OCS "Origin" section after "Position".
+                # Keep insertion point from "Position" when available.
+                if is_block_reference and blockref_has_position:
+                    continue
+                origin_pt = parsed_origin
                 continue
             if label == "u-axis":
                 u_axis_pt = _parse_point_value(value)
@@ -441,10 +1600,34 @@ class DwgServiceCore:
             if label == "radius":
                 radius = _parse_float_value(value)
                 continue
+            if label == "closed":
+                poly_closed_seen = True
+                poly_closed_flag = value.strip().lower() in ("true", "1", "yes", "ktrue")
+                continue
             if label == "start point":
+                if etype.lower() == "acdbhatch":
+                    hatch_current_edge_start = _parse_point_value(value)
+                    continue
                 start_pt = _parse_point_value(value)
                 continue
             if label == "end point":
+                if etype.lower() == "acdbhatch":
+                    p_end = _parse_point_value(value)
+                    if isinstance(hatch_current_loop, dict) and isinstance(p_end, dict):
+                        loop_points = hatch_current_loop.get("points")
+                        if not isinstance(loop_points, list):
+                            loop_points = []
+                            hatch_current_loop["points"] = loop_points
+                        if isinstance(hatch_current_edge_start, dict):
+                            if not loop_points:
+                                loop_points.append(hatch_current_edge_start)
+                            elif isinstance(loop_points[-1], dict) and _point_distance(loop_points[-1], hatch_current_edge_start) > 1e-6:
+                                loop_points.append(hatch_current_edge_start)
+                        if not loop_points:
+                            loop_points.append(p_end)
+                        elif isinstance(loop_points[-1], dict) and _point_distance(loop_points[-1], p_end) > 1e-6:
+                            loop_points.append(p_end)
+                    continue
                 end_pt = _parse_point_value(value)
                 continue
             if label == "start angle":
@@ -453,17 +1636,150 @@ class DwgServiceCore:
             if label == "end angle":
                 end_angle = _parse_float_value(value)
                 continue
+            if label == "name":
+                block_name = value
+                continue
+            if label == "position":
+                parsed_position = _parse_point_value(value)
+                if parsed_position is not None:
+                    origin_pt = parsed_position
+                    if is_block_reference:
+                        blockref_has_position = True
+                continue
+            if label == "scale factors":
+                scale_factors = _parse_point_value(value)
+                continue
+            if label == "rotation":
+                rotation_deg = _parse_float_value(value)
+                continue
+            if label in ("text string", "contents"):
+                text_string = value
+                continue
+            if label in ("text position", "location"):
+                origin_pt = _parse_point_value(value)
+                text_position_point = origin_pt
+                continue
+            if label == "height":
+                text_height = _parse_float_value(value)
+                continue
+            if label in ("actual width", "width"):
+                text_width = _parse_float_value(value)
+                continue
+            if label == "actual height":
+                actual_height = _parse_float_value(value)
+                continue
+            if label == "major axis":
+                major_axis_vec = _parse_point_value(value)
+                continue
+            if label == "minor axis":
+                minor_axis_vec = _parse_point_value(value)
+                continue
+            if label == "major radius":
+                major_radius = _parse_float_value(value)
+                continue
+            if label == "minor radius":
+                minor_radius = _parse_float_value(value)
+                continue
+            if label.startswith("control point ") or label.startswith("fit point "):
+                pt = _parse_point_value(value)
+                if pt is not None:
+                    spline_points.append(pt)
+                continue
+            if label == "color index":
+                try:
+                    color_index = int(value)
+                except Exception:
+                    color_index = None
+                continue
+            if label == "color":
+                color_name = value
+                continue
+            if label == "linetype":
+                linetype_name = value
+                continue
+            if label == "lineweight":
+                lineweight_name = value
+                continue
+            if label == "text style":
+                text_style_name = value
+                continue
+            if label == "width factor":
+                width_factor = _parse_float_value(value)
+                continue
+            if label == "oblique":
+                oblique_angle = _parse_float_value(value)
+                continue
+            if label == "horizontal mode":
+                horizontal_mode = value
+                continue
+            if label == "vertical mode":
+                vertical_mode = value
+                continue
+            if label == "attachment":
+                attachment_mode = value
+                continue
+            if label == "mirrored in x":
+                mirrored_x = value.strip().lower() == "true"
+                continue
+            if label == "mirrored in y":
+                mirrored_y = value.strip().lower() == "true"
+                continue
+            point_like = _parse_point_value(value)
+            if point_like is not None:
+                if "point" in label or label.startswith("frame vertex "):
+                    named_points[label] = point_like
+                    continue
 
         bbox = {"min": min_pt, "max": max_pt} if (min_pt and max_pt) else None
         et = etype.lower()
+
+        style_obj: Dict[str, object] = {"lineweight": lineweight_name or "default"}
+        if color_index is not None:
+            style_obj["color_index"] = color_index
+        if color_name:
+            style_obj["color"] = color_name
+        if linetype_name:
+            style_obj["linetype"] = linetype_name
+        if text_style_name:
+            style_obj["text_style"] = text_style_name
 
         if et == "acdbline":
             start = start_pt
             end = end_pt
             if (start is None or end is None) and min_pt and max_pt and origin_pt and u_axis_pt:
-                inferred = _line_segment_from_bbox(origin_pt, u_axis_pt, min_pt, max_pt)
-                if inferred:
-                    start, end = inferred
+                bbox_dx = abs(float(max_pt["x"]) - float(min_pt["x"]))
+                bbox_dy = abs(float(max_pt["y"]) - float(min_pt["y"]))
+                bbox_span = math.hypot(bbox_dx, bbox_dy)
+                longer = max(bbox_dx, bbox_dy)
+                shorter = min(bbox_dx, bbox_dy)
+                slanted_ratio = (shorter / longer) if longer > 1e-12 else 0.0
+
+                ux = float(u_axis_pt.get("x", 0.0))
+                uy = float(u_axis_pt.get("y", 0.0))
+                un = math.hypot(ux, uy)
+                if un > 1e-12:
+                    ux /= un
+                    uy /= un
+                axis_like = (abs(abs(ux) - 1.0) <= 1e-6 and abs(uy) <= 1e-6) or (abs(abs(uy) - 1.0) <= 1e-6 and abs(ux) <= 1e-6)
+
+                # For many ODA exports, AcDbLine always reports canonical OCS u-axis.
+                # When bbox is visibly non-axis-aligned, that u-axis is not the line
+                # direction and should not drive segment reconstruction.
+                allow_u_axis_infer = not (axis_like and slanted_ratio > 1e-3)
+
+                if allow_u_axis_infer:
+                    inferred = _line_segment_from_bbox(origin_pt, u_axis_pt, min_pt, max_pt)
+                    if inferred:
+                        inf_start, inf_end = inferred
+                        inferred_len = _point_distance(inf_start, inf_end)
+                        # If inferred segment collapses but bbox indicates a visible span,
+                        # keep trying other fallbacks.
+                        if inferred_len > 1e-9 or bbox_span <= 1e-9:
+                            start, end = inf_start, inf_end
+            if (start is None or end is None) and min_pt and max_pt and origin_pt:
+                inferred_from_origin = _line_segment_from_bbox_and_origin(origin_pt, min_pt, max_pt)
+                if inferred_from_origin:
+                    start, end = inferred_from_origin
             if (start is None or end is None) and min_pt and max_pt:
                 start = dict(min_pt)
                 end = dict(max_pt)
@@ -477,13 +1793,33 @@ class DwgServiceCore:
                 "layer": layer,
                 "space_id": space_id,
                 "geom": {"start": start, "end": end},
-                "style": {"lineweight": "default"},
+                "style": style_obj,
                 "bbox": bbox,
             }
 
-        if et in ("acdbpolyline", "acdb2dpolyline", "acdb3dpolyline"):
+        if et in ("acdbpolyline", "acdb2dpolyline", "acdb3dpolyline", "acdblwpolyline"):
             if len(vertices) < 2:
                 return None
+            if poly_closed_seen:
+                # Trust explicit CAD flag first: Closed=false must remain open.
+                is_closed = bool(poly_closed_flag)
+            else:
+                is_closed = False
+                if len(vertices) >= 2:
+                    first_v = vertices[0]
+                    last_v = vertices[-1]
+                    is_closed = _point_distance(first_v, last_v) <= 1e-6
+                if not is_closed and vertex_segment_kinds:
+                    tail = vertex_segment_kinds[-1].lower()
+                    if "coincident" in tail:
+                        is_closed = True
+                if not is_closed and vertex_segment_kinds and len(vertex_segment_kinds) == len(vertices):
+                    tail = vertex_segment_kinds[-1].strip().lower()
+                    # In ODA polyline dump, an open polyline typically ends with kPoint
+                    # (no outgoing segment from the last vertex). If the last vertex still
+                    # has a real segment kind (kLine / kArc / etc.), it implies closure.
+                    if tail and tail not in ("kpoint", "point", "kcoincident", "coincident"):
+                        is_closed = True
             if bbox is None:
                 bbox = _bbox_from_points(vertices)
             return {
@@ -491,8 +1827,8 @@ class DwgServiceCore:
                 "type": "POLYLINE",
                 "layer": layer,
                 "space_id": space_id,
-                "geom": {"vertices": vertices},
-                "style": {"lineweight": "default"},
+                "geom": {"vertices": vertices, "closed": is_closed},
+                "style": style_obj,
                 "bbox": bbox,
             }
 
@@ -510,7 +1846,7 @@ class DwgServiceCore:
                 "layer": layer,
                 "space_id": space_id,
                 "geom": {"center": center_pt, "radius": radius},
-                "style": {"lineweight": "default"},
+                "style": style_obj,
                 "bbox": bbox,
             }
 
@@ -549,34 +1885,1009 @@ class DwgServiceCore:
                 "layer": layer,
                 "space_id": space_id,
                 "geom": geom,
-                "style": {"lineweight": "default"},
+                "style": style_obj,
                 "bbox": bbox,
             }
+
+        if et == "acdbblockreference":
+            if not block_name:
+                return None
+            position = origin_pt or {"x": 0.0, "y": 0.0, "z": 0.0}
+            sx = float(scale_factors.get("x", 1.0)) if isinstance(scale_factors, dict) else 1.0
+            sy = float(scale_factors.get("y", 1.0)) if isinstance(scale_factors, dict) else 1.0
+            sz = float(scale_factors.get("z", 1.0)) if isinstance(scale_factors, dict) else 1.0
+            return {
+                "id": handle,
+                "type": "INSERT",
+                "layer": layer,
+                "space_id": space_id,
+                "geom": {
+                    "block_name": block_name,
+                    "position": position,
+                    "rotation": float(rotation_deg or 0.0),
+                    "scale": {"x": sx, "y": sy, "z": sz},
+                },
+                "style": style_obj,
+                "bbox": bbox,
+            }
+
+        if et in ("acdbtext", "acdbmtext", "acdbattributedefinition", "acdbattribute"):
+            text = text_string or ""
+            pos = origin_pt
+            if pos is None:
+                if min_pt and max_pt:
+                    pos = {
+                        "x": (min_pt["x"] + max_pt["x"]) * 0.5,
+                        "y": (min_pt["y"] + max_pt["y"]) * 0.5,
+                        "z": min_pt.get("z", 0.0),
+                    }
+                else:
+                    return None
+            if bbox is None:
+                h = float(text_height or 100.0)
+                w = float(text_width or max(h * 0.5, len(text) * h * 0.55))
+                bbox = {
+                    "min": {"x": pos["x"], "y": pos["y"] - h, "z": pos.get("z", 0.0)},
+                    "max": {"x": pos["x"] + w, "y": pos["y"], "z": pos.get("z", 0.0)},
+                }
+            return {
+                "id": handle,
+                "type": "TEXT",
+                "layer": layer,
+                "space_id": space_id,
+                "geom": {
+                    "text": text.replace("\\P", "\n").replace("\\p", "\n"),
+                    "position": pos,
+                    "height": float(text_height or 100.0),
+                    "rotation": float(rotation_deg or 0.0),
+                    "width": float(text_width or 0.0),
+                    "width_factor": float(width_factor or 1.0),
+                    "is_mtext": et == "acdbmtext",
+                    "style_name": text_style_name,
+                    "horizontal_mode": horizontal_mode,
+                    "vertical_mode": vertical_mode,
+                    "attachment": attachment_mode,
+                    "oblique": float(oblique_angle or 0.0),
+                    "actual_height": float(actual_height or text_height or 0.0),
+                    "mirrored_x": bool(mirrored_x),
+                    "mirrored_y": bool(mirrored_y),
+                    "is_attribute": et in ("acdbattributedefinition", "acdbattribute"),
+                },
+                "style": style_obj,
+                "bbox": bbox,
+            }
+
+        if et in ("acdbraligneddimension", "acdbrotateddimension"):
+            ext1 = ext_line1_point or named_points.get("extension line 1 point")
+            ext2 = ext_line2_point or named_points.get("extension line 2 point")
+            dim_pt = dimension_line_point or named_points.get("dimension line point") or origin_pt
+            text_pos = text_position_point or named_points.get("text position") or dim_pt
+
+            if not isinstance(ext1, dict) or not isinstance(ext2, dict):
+                return None
+            if not isinstance(dim_pt, dict):
+                dim_pt = dict(ext2)
+            line_start, line_end = _dimension_line_endpoints(ext1, ext2, dim_pt)
+
+            if bbox is None:
+                pts_for_bbox = [ext1, ext2, dim_pt, line_start, line_end]
+                if isinstance(text_pos, dict):
+                    pts_for_bbox.append(text_pos)
+                bbox = _bbox_from_points(pts_for_bbox)
+
+            text_value = _clean_oda_text_value(text_string)
+            if not text_value:
+                text_value = _clean_oda_text_value(formatted_measurement)
+            geom_dim: Dict[str, object] = {
+                "ext1": ext1,
+                "ext2": ext2,
+                "dim_line_point": dim_pt,
+                "line_start": line_start,
+                "line_end": line_end,
+                "measurement": float(dimension_measurement or _point_distance(ext1, ext2)),
+                "rotation": float(text_rotation_deg if text_rotation_deg is not None else rotation_deg or 0.0),
+                "text": text_value,
+                "text_position": text_pos if isinstance(text_pos, dict) else dict(dim_pt),
+                "dim_kind": "aligned" if et == "acdbraligneddimension" else "rotated",
+            }
+            return {
+                "id": handle,
+                "type": "DIMENSION",
+                "layer": layer,
+                "space_id": space_id,
+                "geom": geom_dim,
+                "style": style_obj,
+                "bbox": bbox,
+            }
+
+        if et == "acdbleader":
+            leader_points = [p for p in vertices if isinstance(p, dict)]
+            if len(leader_points) < 2:
+                # Fallback: parse named vertex labels when ODA emits them inline.
+                by_index: List[Tuple[int, Dict[str, float]]] = []
+                for k, p in named_points.items():
+                    m = re.match(r"^vertex\s+(\d+)$", k)
+                    if not m:
+                        continue
+                    by_index.append((int(m.group(1)), p))
+                by_index.sort(key=lambda item: item[0])
+                leader_points = [p for _, p in by_index]
+            if len(leader_points) < 2 and isinstance(start_pt, dict) and isinstance(end_pt, dict):
+                leader_points = [start_pt, end_pt]
+            if len(leader_points) < 2:
+                return None
+            if bbox is None:
+                bbox = _bbox_from_points(leader_points)
+            return {
+                "id": handle,
+                "type": "LEADER",
+                "layer": layer,
+                "space_id": space_id,
+                "geom": {
+                    "points": leader_points,
+                    "has_arrowhead": bool(leader_has_arrowhead),
+                    "splined": bool(leader_splined),
+                },
+                "style": style_obj,
+                "bbox": bbox,
+            }
+
+        if et == "acdbpoint":
+            pos = origin_pt or center_pt
+            if pos is None and min_pt and max_pt:
+                pos = {
+                    "x": (min_pt["x"] + max_pt["x"]) * 0.5,
+                    "y": (min_pt["y"] + max_pt["y"]) * 0.5,
+                    "z": min_pt.get("z", 0.0),
+                }
+            if pos is None:
+                return None
+            if bbox is None:
+                bbox = {"min": dict(pos), "max": dict(pos)}
+            return {
+                "id": handle,
+                "type": "POINT",
+                "layer": layer,
+                "space_id": space_id,
+                "geom": {"position": pos, "display_size": 6.0},
+                "style": style_obj,
+                "bbox": bbox,
+            }
+
+        if et == "acdbhatch":
+            loops_out: List[Dict[str, object]] = []
+            for lp in hatch_loops:
+                points = lp.get("points") if isinstance(lp, dict) else None
+                if not isinstance(points, list):
+                    continue
+                clean_points = [p for p in points if isinstance(p, dict)]
+                if len(clean_points) < 2:
+                    continue
+                if _point_distance(clean_points[0], clean_points[-1]) > 1e-6:
+                    clean_points.append(dict(clean_points[0]))
+                loops_out.append(
+                    {
+                        "kind": lp.get("kind", "kExternal") if isinstance(lp, dict) else "kExternal",
+                        "points": clean_points,
+                        "closed": True,
+                    }
+                )
+            if not loops_out and min_pt and max_pt:
+                loops_out = [
+                    {
+                        "kind": "kExternal",
+                        "closed": True,
+                        "points": [
+                            {"x": min_pt["x"], "y": min_pt["y"], "z": min_pt.get("z", 0.0)},
+                            {"x": max_pt["x"], "y": min_pt["y"], "z": min_pt.get("z", 0.0)},
+                            {"x": max_pt["x"], "y": max_pt["y"], "z": max_pt.get("z", 0.0)},
+                            {"x": min_pt["x"], "y": max_pt["y"], "z": min_pt.get("z", 0.0)},
+                            {"x": min_pt["x"], "y": min_pt["y"], "z": min_pt.get("z", 0.0)},
+                        ],
+                    }
+                ]
+            if not loops_out:
+                return None
+            if bbox is None:
+                all_pts: List[Dict[str, float]] = []
+                for lp in loops_out:
+                    pts = lp.get("points")
+                    if isinstance(pts, list):
+                        all_pts.extend([p for p in pts if isinstance(p, dict)])
+                bbox = _bbox_from_points(all_pts)
+            return {
+                "id": handle,
+                "type": "HATCH",
+                "layer": layer,
+                "space_id": space_id,
+                "geom": {
+                    "loops": loops_out,
+                    "solid_fill": bool(hatch_solid_fill),
+                    "pattern_name": hatch_pattern_name or "SOLID",
+                },
+                "style": style_obj,
+                "bbox": bbox,
+            }
+
+        if et == "acdbwipeout":
+            frame_pts: List[Tuple[int, Dict[str, float]]] = []
+            for k, p in named_points.items():
+                m = re.match(r"^frame vertex\s+(\d+)$", k)
+                if not m:
+                    continue
+                frame_pts.append((int(m.group(1)), p))
+            frame_pts.sort(key=lambda item: item[0])
+            vertices_out = [p for _, p in frame_pts]
+            if len(vertices_out) < 3:
+                return None
+            if _point_distance(vertices_out[0], vertices_out[-1]) > 1e-6:
+                vertices_out.append(dict(vertices_out[0]))
+            if bbox is None:
+                bbox = _bbox_from_points(vertices_out)
+            return {
+                "id": handle,
+                "type": "WIPEOUT",
+                "layer": layer,
+                "space_id": space_id,
+                "geom": {
+                    "vertices": vertices_out,
+                    "closed": True,
+                },
+                "style": style_obj,
+                "bbox": bbox,
+            }
+
+        if et in ("acdbsolid", "acdbtrace", "acdbface", "acdb3dface"):
+            ordered_keys = ("first point", "second point", "third point", "fourth point", "point 0", "point 1", "point 2", "point 3")
+            pts: List[Dict[str, float]] = []
+            for key in ordered_keys:
+                p = named_points.get(key)
+                if isinstance(p, dict):
+                    if not pts or _point_distance(pts[-1], p) > 1e-6:
+                        pts.append(p)
+            if len(pts) < 3:
+                return None
+            if _point_distance(pts[0], pts[-1]) > 1e-6:
+                pts.append(dict(pts[0]))
+            if bbox is None:
+                bbox = _bbox_from_points(pts)
+            return {
+                "id": handle,
+                "type": "POLYLINE",
+                "layer": layer,
+                "space_id": space_id,
+                "geom": {"vertices": pts, "closed": True},
+                "style": style_obj,
+                "bbox": bbox,
+            }
+
+        if et in ("acdbxline", "acdbray"):
+            start = origin_pt or start_pt
+            direction_pt = None
+            if isinstance(u_axis_pt, dict):
+                direction_pt = {
+                    "x": float(start["x"]) + float(u_axis_pt.get("x", 0.0)),
+                    "y": float(start["y"]) + float(u_axis_pt.get("y", 0.0)),
+                    "z": float(start.get("z", 0.0)),
+                } if isinstance(start, dict) else None
+            if not isinstance(start, dict):
+                return None
+            if not isinstance(direction_pt, dict):
+                direction_pt = end_pt
+            if not isinstance(direction_pt, dict):
+                return None
+            dx = float(direction_pt["x"]) - float(start["x"])
+            dy = float(direction_pt["y"]) - float(start["y"])
+            dn = math.hypot(dx, dy)
+            if dn <= 1e-9:
+                return None
+            dx /= dn
+            dy /= dn
+            span = 20000.0
+            if bbox and isinstance(bbox.get("min"), dict) and isinstance(bbox.get("max"), dict):
+                bx = abs(float(bbox["max"]["x"]) - float(bbox["min"]["x"]))
+                by = abs(float(bbox["max"]["y"]) - float(bbox["min"]["y"]))
+                span = max(span, math.hypot(bx, by) * 2.0)
+            if et == "acdbxline":
+                p1 = {"x": float(start["x"]) - dx * span, "y": float(start["y"]) - dy * span, "z": float(start.get("z", 0.0))}
+                p2 = {"x": float(start["x"]) + dx * span, "y": float(start["y"]) + dy * span, "z": float(start.get("z", 0.0))}
+            else:
+                p1 = dict(start)
+                p2 = {"x": float(start["x"]) + dx * span, "y": float(start["y"]) + dy * span, "z": float(start.get("z", 0.0))}
+            if bbox is None:
+                bbox = _bbox_from_points([p1, p2])
+            return {
+                "id": handle,
+                "type": "LINE",
+                "layer": layer,
+                "space_id": space_id,
+                "geom": {"start": p1, "end": p2, "source_type": et.upper()},
+                "style": style_obj,
+                "bbox": bbox,
+            }
+
+        if et == "acdbellipse":
+            if center_pt is None:
+                return None
+
+            if major_radius is None and isinstance(major_axis_vec, dict):
+                major_radius = math.hypot(float(major_axis_vec.get("x", 0.0)), float(major_axis_vec.get("y", 0.0)))
+            if minor_radius is None and isinstance(minor_axis_vec, dict):
+                minor_radius = math.hypot(float(minor_axis_vec.get("x", 0.0)), float(minor_axis_vec.get("y", 0.0)))
+            if major_radius is None:
+                major_radius = radius
+            if major_radius is None or major_radius <= 0:
+                return None
+            if minor_radius is None or minor_radius <= 0:
+                minor_radius = major_radius
+
+            if rotation_deg is None and isinstance(major_axis_vec, dict):
+                rotation_deg = math.degrees(math.atan2(float(major_axis_vec.get("y", 0.0)), float(major_axis_vec.get("x", 0.0))))
+            rotation = float(rotation_deg or 0.0)
+
+            if bbox is None:
+                rx = abs(float(major_radius))
+                ry = abs(float(minor_radius))
+                bbox = {
+                    "min": {"x": center_pt["x"] - rx, "y": center_pt["y"] - ry, "z": center_pt.get("z", 0.0)},
+                    "max": {"x": center_pt["x"] + rx, "y": center_pt["y"] + ry, "z": center_pt.get("z", 0.0)},
+                }
+
+            geom_ellipse: Dict[str, object] = {
+                "center": center_pt,
+                "rx": float(major_radius),
+                "ry": float(minor_radius),
+                "rotation": rotation,
+            }
+            if isinstance(start_angle, (int, float)):
+                geom_ellipse["start_angle"] = float(start_angle)
+            if isinstance(end_angle, (int, float)):
+                geom_ellipse["end_angle"] = float(end_angle)
+            if isinstance(start_pt, dict):
+                geom_ellipse["start"] = start_pt
+            if isinstance(end_pt, dict):
+                geom_ellipse["end"] = end_pt
+            if isinstance(major_axis_vec, dict):
+                geom_ellipse["major_axis"] = major_axis_vec
+            if isinstance(minor_axis_vec, dict):
+                geom_ellipse["minor_axis"] = minor_axis_vec
+
+            return {
+                "id": handle,
+                "type": "ELLIPSE",
+                "layer": layer,
+                "space_id": space_id,
+                "geom": geom_ellipse,
+                "style": style_obj,
+                "bbox": bbox,
+            }
+
+        if et == "acdbspline":
+            points = list(spline_points)
+            if len(points) < 2:
+                if isinstance(start_pt, dict):
+                    points.append(start_pt)
+                if isinstance(end_pt, dict):
+                    points.append(end_pt)
+            if len(points) < 2:
+                return None
+            if bbox is None:
+                bbox = _bbox_from_points(points)
+            return {
+                "id": handle,
+                "type": "SPLINE",
+                "layer": layer,
+                "space_id": space_id,
+                "geom": {"points": points},
+                "style": style_obj,
+                "bbox": bbox,
+            }
+
+        return None
+
+    def _insert_transform_from_entity(self, ent: Dict[str, object]) -> Affine2D:
+        geom = ent.get("geom", {}) if isinstance(ent.get("geom"), dict) else {}
+        pos = geom.get("position") if isinstance(geom.get("position"), dict) else {"x": 0.0, "y": 0.0, "z": 0.0}
+        scale = geom.get("scale") if isinstance(geom.get("scale"), dict) else {}
+        sx = float(scale.get("x", 1.0))
+        sy = float(scale.get("y", 1.0))
+        rot_deg = float(geom.get("rotation", 0.0))
+        rad = math.radians(rot_deg)
+        cos_r = math.cos(rad)
+        sin_r = math.sin(rad)
+        tx = float(pos.get("x", 0.0))
+        ty = float(pos.get("y", 0.0))
+        return (cos_r * sx, -sin_r * sy, sin_r * sx, cos_r * sy, tx, ty)
+
+    def _extract_layer_styles(self, dump_text: str) -> Dict[str, Dict[str, object]]:
+        layer_styles: Dict[str, Dict[str, object]] = {}
+        current_name: Optional[str] = None
+        current_color_index: Optional[int] = None
+        current_color_name: Optional[str] = None
+        in_record = False
+
+        def finalize_record() -> None:
+            nonlocal current_name, current_color_index, current_color_name
+            if current_name:
+                obj: Dict[str, object] = {}
+                if current_color_index is not None:
+                    obj["color_index"] = current_color_index
+                if current_color_name:
+                    obj["color"] = current_color_name
+                layer_styles[current_name] = obj
+            current_name = None
+            current_color_index = None
+            current_color_name = None
+
+        for raw in dump_text.splitlines():
+            stripped = raw.strip()
+            if stripped == "<AcDbLayerTableRecord>":
+                if in_record:
+                    finalize_record()
+                in_record = True
+                continue
+
+            if in_record and stripped.startswith("<AcDb") and stripped != "<AcDbLayerTableRecord>":
+                finalize_record()
+                in_record = False
+                continue
+
+            if not in_record:
+                continue
+
+            label, value = _parse_label_value(raw)
+            if not label or value is None:
+                continue
+            if label == "name" and current_name is None:
+                current_name = value
+                continue
+            if label == "color index":
+                try:
+                    current_color_index = int(value)
+                except Exception:
+                    current_color_index = None
+                continue
+            if label == "color":
+                current_color_name = value
+                continue
+
+        if in_record:
+            finalize_record()
+
+        return layer_styles
+
+    def _extract_text_styles(self, dump_text: str) -> Dict[str, Dict[str, object]]:
+        text_styles: Dict[str, Dict[str, object]] = {}
+        current_name: Optional[str] = None
+        current_font_file: Optional[str] = None
+        current_bigfont_file: Optional[str] = None
+        current_typeface: Optional[str] = None
+        current_shape_file = False
+        in_record = False
+
+        def finalize_record() -> None:
+            nonlocal current_name, current_font_file, current_bigfont_file, current_typeface, current_shape_file
+            if current_name:
+                font_name = (current_font_file or "").strip()
+                if not font_name:
+                    font_name = (current_typeface or "").strip()
+                if not font_name:
+                    font_name = current_name
+                bigfont_name = (current_bigfont_file or "").strip() or None
+                font_kind = "shx" if current_shape_file else _detect_font_kind(font_name)
+                if font_kind == "unknown" and bigfont_name and _detect_font_kind(bigfont_name) == "shx":
+                    font_kind = "shx"
+                font_family = (current_typeface or "").strip() or _font_family_from_name(font_name)
+                text_styles[current_name] = {
+                    "style_name": current_name,
+                    "font_name": font_name,
+                    "bigfont_name": bigfont_name,
+                    "font_family": font_family,
+                    "font_kind": font_kind,
+                    "shape_file": bool(current_shape_file),
+                }
+            current_name = None
+            current_font_file = None
+            current_bigfont_file = None
+            current_typeface = None
+            current_shape_file = False
+
+        for raw in dump_text.splitlines():
+            stripped = raw.strip()
+            if stripped == "<AcDbTextStyleTableRecord>":
+                if in_record:
+                    finalize_record()
+                in_record = True
+                continue
+
+            if in_record and stripped.startswith("<AcDb") and stripped != "<AcDbTextStyleTableRecord>":
+                finalize_record()
+                in_record = False
+                continue
+
+            if not in_record:
+                continue
+
+            label, value = _parse_label_value(raw)
+            if not label or value is None:
+                continue
+            if label == "name" and current_name is None:
+                current_name = value
+                continue
+            if label in ("file", "file name", "filename", "font", "font name", "font file", "primary file", "primary font file"):
+                current_font_file = value
+                continue
+            if label in (
+                "bigfont",
+                "bigfont file",
+                "bigfont file name",
+                "bigfont filename",
+                "big font file",
+                "big font",
+            ):
+                current_bigfont_file = value
+                continue
+            if label == "typeface":
+                current_typeface = value
+                continue
+            if label == "shape file":
+                current_shape_file = str(value).strip().lower() == "true"
+                continue
+
+        if in_record:
+            finalize_record()
+        return text_styles
+
+    def _attach_text_font_meta(self, ent: Dict[str, object], text_styles: Dict[str, Dict[str, object]]) -> Dict[str, object]:
+        if str(ent.get("type", "")).upper() != "TEXT":
+            return ent
+        geom = ent.get("geom")
+        if not isinstance(geom, dict):
+            return ent
+        style_obj = ent.get("style", {}) if isinstance(ent.get("style"), dict) else {}
+        style_name = str(geom.get("style_name") or style_obj.get("text_style") or "").strip()
+        style_rec = text_styles.get(style_name) if style_name else None
+
+        font_name = str((style_rec or {}).get("font_name") or style_name or "").strip()
+        font_family = str((style_rec or {}).get("font_family") or _font_family_from_name(font_name) or "").strip()
+        font_kind = str((style_rec or {}).get("font_kind") or _detect_font_kind(font_name) or "unknown").strip().lower() or "unknown"
+        if bool((style_rec or {}).get("shape_file", False)):
+            font_kind = "shx"
+        font_source = "text_style_table" if style_rec else ("entity_style_name" if style_name else "fallback")
+        font_key_seed = style_name or font_name or font_family or "default"
+        font_key = _sanitize_font_key(font_key_seed)
+
+        geom_out = dict(geom)
+        geom_out["font_key"] = font_key
+        geom_out["font_style_name"] = style_name or None
+        geom_out["font_name"] = font_name or None
+        geom_out["font_family"] = font_family or None
+        geom_out["font_kind"] = font_kind
+        geom_out["font_source"] = font_source
+        geom_out["shape_file"] = bool((style_rec or {}).get("shape_file", False))
+
+        out = dict(ent)
+        out["geom"] = geom_out
+        return out
+
+    def _layer_default_color_index(
+        self,
+        layer_name: str,
+        layer_styles: Dict[str, Dict[str, object]],
+    ) -> int:
+        style = layer_styles.get(layer_name, {})
+        idx_raw = style.get("color_index")
+        if isinstance(idx_raw, (int, float)) and math.isfinite(float(idx_raw)):
+            return int(idx_raw)
+        parsed = _parse_aci_from_color_name(style.get("color"))
+        if parsed is not None:
+            return parsed
+        return 7
+
+    def _resolve_effective_style(
+        self,
+        style_obj: Dict[str, object],
+        layer_name: str,
+        layer_styles: Dict[str, Dict[str, object]],
+        parent_effective_color_index: Optional[int],
+    ) -> Dict[str, object]:
+        out = dict(style_obj)
+        local_idx: Optional[int] = None
+        raw_idx = out.get("color_index")
+        if isinstance(raw_idx, (int, float)) and math.isfinite(float(raw_idx)):
+            local_idx = int(raw_idx)
+        if local_idx is None:
+            local_idx = _parse_aci_from_color_name(out.get("color"))
+        if local_idx is None:
+            local_idx = 256
+
+        source = "entity"
+        if local_idx == 0:
+            if parent_effective_color_index is not None:
+                effective_idx = int(parent_effective_color_index)
+                source = "byblock(parent)"
+            else:
+                effective_idx = self._layer_default_color_index(layer_name, layer_styles)
+                source = "byblock(layer-fallback)"
+        elif local_idx == 256:
+            effective_idx = self._layer_default_color_index(layer_name, layer_styles)
+            source = "bylayer"
+        else:
+            effective_idx = int(local_idx)
+            source = "entity"
+
+        out["effective_color_index"] = effective_idx
+        out["effective_color"] = f"ACI {effective_idx}"
+        out["effective_color_source"] = source
+        return out
+
+    def _transform_entity(self, ent: Dict[str, object], tf: Affine2D) -> Optional[Dict[str, object]]:
+        et = str(ent.get("type", "")).upper()
+        geom = ent.get("geom", {}) if isinstance(ent.get("geom"), dict) else {}
+
+        transformed = {
+            "id": ent.get("id"),
+            "type": ent.get("type"),
+            "layer": ent.get("layer", "0"),
+            "space_id": ent.get("space_id", "model"),
+            "geom": {},
+            "style": ent.get("style", {"lineweight": "default"}),
+            "bbox": None,
+        }
+
+        if et == "LINE":
+            start = geom.get("start")
+            end = geom.get("end")
+            if not isinstance(start, dict) or not isinstance(end, dict):
+                return None
+            t_start = _apply_affine(tf, start)
+            t_end = _apply_affine(tf, end)
+            transformed["geom"] = {"start": t_start, "end": t_end}
+            transformed["bbox"] = _bbox_from_points([t_start, t_end])
+            return transformed
+
+        if et == "POLYLINE":
+            vertices_raw = geom.get("vertices")
+            if not isinstance(vertices_raw, list):
+                return None
+            vertices = [_apply_affine(tf, v) for v in vertices_raw if isinstance(v, dict)]
+            if len(vertices) < 2:
+                return None
+            transformed["geom"] = {"vertices": vertices, "closed": bool(geom.get("closed", False))}
+            transformed["bbox"] = _bbox_from_points(vertices)
+            return transformed
+
+        if et == "CIRCLE":
+            center = geom.get("center")
+            radius = geom.get("radius")
+            if not isinstance(center, dict) or not isinstance(radius, (int, float)):
+                return None
+            t_center = _apply_affine(tf, center)
+            sx, sy = _affine_scales(tf)
+            t_radius = float(radius) * (abs(sx) + abs(sy)) * 0.5
+            if t_radius <= 0:
+                return None
+            transformed["geom"] = {"center": t_center, "radius": t_radius}
+            transformed["bbox"] = {
+                "min": {"x": t_center["x"] - t_radius, "y": t_center["y"] - t_radius, "z": t_center.get("z", 0.0)},
+                "max": {"x": t_center["x"] + t_radius, "y": t_center["y"] + t_radius, "z": t_center.get("z", 0.0)},
+            }
+            return transformed
+
+        if et == "ARC":
+            center = geom.get("center")
+            if not isinstance(center, dict):
+                return None
+            t_center = _apply_affine(tf, center)
+            sx, sy = _affine_scales(tf)
+            scale_avg = (abs(sx) + abs(sy)) * 0.5
+            if scale_avg <= 1e-12:
+                return None
+
+            start_raw = geom.get("start")
+            end_raw = geom.get("end")
+            radius = geom.get("radius")
+            start_angle = geom.get("start_angle")
+            end_angle = geom.get("end_angle")
+
+            if (not isinstance(start_raw, dict) or not isinstance(end_raw, dict)) and isinstance(radius, (int, float)):
+                if isinstance(start_angle, (int, float)):
+                    start_raw = {
+                        "x": float(center["x"]) + float(radius) * math.cos(math.radians(float(start_angle))),
+                        "y": float(center["y"]) + float(radius) * math.sin(math.radians(float(start_angle))),
+                        "z": float(center.get("z", 0.0)),
+                    }
+                if isinstance(end_angle, (int, float)):
+                    end_raw = {
+                        "x": float(center["x"]) + float(radius) * math.cos(math.radians(float(end_angle))),
+                        "y": float(center["y"]) + float(radius) * math.sin(math.radians(float(end_angle))),
+                        "z": float(center.get("z", 0.0)),
+                    }
+
+            if not isinstance(start_raw, dict) or not isinstance(end_raw, dict):
+                return None
+
+            t_start = _apply_affine(tf, start_raw)
+            t_end = _apply_affine(tf, end_raw)
+            t_radius = (
+                float(radius) * scale_avg
+                if isinstance(radius, (int, float))
+                else max(1e-9, _point_distance(t_center, t_start))
+            )
+            s_angle = _point_angle_from_center(t_center, t_start)
+            e_angle = _point_angle_from_center(t_center, t_end)
+            transformed["geom"] = {
+                "center": t_center,
+                "radius": t_radius,
+                "start": t_start,
+                "end": t_end,
+                "start_angle": s_angle,
+                "end_angle": e_angle,
+            }
+            # Prefer ODA-provided entity extents (affine-mapped) to avoid over-inflated
+            # arc bounds when center is far from the visible arc chord.
+            transformed["bbox"] = _apply_bbox_affine(tf, ent.get("bbox"))
+            if transformed["bbox"] is None:
+                transformed["bbox"] = _bbox_from_points([t_start, t_end, t_center])
+            return transformed
+
+        if et == "TEXT":
+            pos = geom.get("position")
+            text = str(geom.get("text", ""))
+            if not isinstance(pos, dict):
+                return None
+            t_pos = _apply_affine(tf, pos)
+            sx, sy = _affine_scales(tf)
+            scale_avg = max(1e-9, (abs(sx) + abs(sy)) * 0.5)
+            local_rot = float(geom.get("rotation", 0.0))
+            tf_rot = math.degrees(math.atan2(tf[2], tf[0]))
+            t_height = max(1e-9, float(geom.get("height", 100.0)) * scale_avg)
+            t_width = float(geom.get("width", 0.0)) * scale_avg
+            transformed["geom"] = {
+                "text": text,
+                "position": t_pos,
+                "height": t_height,
+                "rotation": local_rot + tf_rot,
+                "width": t_width,
+                "width_factor": float(geom.get("width_factor", 1.0)),
+                "is_mtext": bool(geom.get("is_mtext", False)),
+                "style_name": geom.get("style_name"),
+                "horizontal_mode": geom.get("horizontal_mode"),
+                "vertical_mode": geom.get("vertical_mode"),
+                "attachment": geom.get("attachment"),
+                "oblique": float(geom.get("oblique", 0.0)),
+                "actual_height": float(geom.get("actual_height", t_height)),
+                "mirrored_x": bool(geom.get("mirrored_x", False)),
+                "mirrored_y": bool(geom.get("mirrored_y", False)),
+                "font_key": geom.get("font_key"),
+                "font_style_name": geom.get("font_style_name"),
+                "font_name": geom.get("font_name"),
+                "font_family": geom.get("font_family"),
+                "font_kind": geom.get("font_kind"),
+                "font_source": geom.get("font_source"),
+            }
+            transformed["bbox"] = _apply_bbox_affine(tf, ent.get("bbox"))
+            if transformed["bbox"] is None:
+                est_w = t_width if t_width > 0 else max(t_height * 0.5, len(text) * t_height * 0.55)
+                transformed["bbox"] = {
+                    "min": {"x": t_pos["x"], "y": t_pos["y"] - t_height, "z": t_pos.get("z", 0.0)},
+                    "max": {"x": t_pos["x"] + est_w, "y": t_pos["y"], "z": t_pos.get("z", 0.0)},
+                }
+            return transformed
+
+        if et == "POINT":
+            pos = geom.get("position")
+            if not isinstance(pos, dict):
+                return None
+            t_pos = _apply_affine(tf, pos)
+            transformed["geom"] = {
+                "position": t_pos,
+                "display_size": float(geom.get("display_size", 6.0)),
+            }
+            transformed["bbox"] = {"min": dict(t_pos), "max": dict(t_pos)}
+            return transformed
+
+        if et == "HATCH":
+            loops_raw = geom.get("loops")
+            if not isinstance(loops_raw, list):
+                return None
+            loops: List[Dict[str, object]] = []
+            all_points: List[Dict[str, float]] = []
+            for loop in loops_raw:
+                if not isinstance(loop, dict):
+                    continue
+                points_raw = loop.get("points")
+                if not isinstance(points_raw, list):
+                    continue
+                points = [_apply_affine(tf, p) for p in points_raw if isinstance(p, dict)]
+                if len(points) < 2:
+                    continue
+                loops.append(
+                    {
+                        "kind": loop.get("kind", "kExternal"),
+                        "closed": bool(loop.get("closed", True)),
+                        "points": points,
+                    }
+                )
+                all_points.extend(points)
+            if not loops:
+                return None
+            transformed["geom"] = {
+                "loops": loops,
+                "solid_fill": bool(geom.get("solid_fill", False)),
+                "pattern_name": geom.get("pattern_name", "SOLID"),
+            }
+            transformed["bbox"] = _bbox_from_points(all_points)
+            return transformed
+
+        if et == "DIMENSION":
+            ext1 = geom.get("ext1")
+            ext2 = geom.get("ext2")
+            dim_pt = geom.get("dim_line_point")
+            if not isinstance(ext1, dict) or not isinstance(ext2, dict):
+                return None
+            if not isinstance(dim_pt, dict):
+                dim_pt = ext2
+            t_ext1 = _apply_affine(tf, ext1)
+            t_ext2 = _apply_affine(tf, ext2)
+            t_dim_pt = _apply_affine(tf, dim_pt)
+            line_start_raw = geom.get("line_start")
+            line_end_raw = geom.get("line_end")
+            if isinstance(line_start_raw, dict) and isinstance(line_end_raw, dict):
+                t_line_start = _apply_affine(tf, line_start_raw)
+                t_line_end = _apply_affine(tf, line_end_raw)
+            else:
+                t_line_start, t_line_end = _dimension_line_endpoints(t_ext1, t_ext2, t_dim_pt)
+
+            text_pos = geom.get("text_position")
+            t_text_pos = _apply_affine(tf, text_pos) if isinstance(text_pos, dict) else {
+                "x": (t_line_start["x"] + t_line_end["x"]) * 0.5,
+                "y": (t_line_start["y"] + t_line_end["y"]) * 0.5,
+                "z": 0.0,
+            }
+            sx, sy = _affine_scales(tf)
+            scale_avg = max(1e-9, (abs(sx) + abs(sy)) * 0.5)
+            local_rot = float(geom.get("rotation", 0.0))
+            tf_rot = math.degrees(math.atan2(tf[2], tf[0]))
+            measurement_raw = geom.get("measurement")
+            measurement = float(measurement_raw) * scale_avg if isinstance(measurement_raw, (int, float)) else _point_distance(t_ext1, t_ext2)
+            transformed["geom"] = {
+                "ext1": t_ext1,
+                "ext2": t_ext2,
+                "dim_line_point": t_dim_pt,
+                "line_start": t_line_start,
+                "line_end": t_line_end,
+                "text_position": t_text_pos,
+                "text": str(geom.get("text", "")),
+                "measurement": measurement,
+                "rotation": local_rot + tf_rot,
+                "dim_kind": geom.get("dim_kind", "aligned"),
+            }
+            transformed["bbox"] = _apply_bbox_affine(tf, ent.get("bbox"))
+            if transformed["bbox"] is None:
+                transformed["bbox"] = _bbox_from_points([t_ext1, t_ext2, t_line_start, t_line_end, t_text_pos])
+            return transformed
+
+        if et == "LEADER":
+            points_raw = geom.get("points")
+            if not isinstance(points_raw, list):
+                return None
+            points = [_apply_affine(tf, p) for p in points_raw if isinstance(p, dict)]
+            if len(points) < 2:
+                return None
+            transformed["geom"] = {
+                "points": points,
+                "has_arrowhead": bool(geom.get("has_arrowhead", False)),
+                "splined": bool(geom.get("splined", False)),
+            }
+            transformed["bbox"] = _bbox_from_points(points)
+            return transformed
+
+        if et == "WIPEOUT":
+            vertices_raw = geom.get("vertices")
+            if not isinstance(vertices_raw, list):
+                return None
+            vertices = [_apply_affine(tf, p) for p in vertices_raw if isinstance(p, dict)]
+            if len(vertices) < 3:
+                return None
+            transformed["geom"] = {"vertices": vertices, "closed": bool(geom.get("closed", True))}
+            transformed["bbox"] = _bbox_from_points(vertices)
+            return transformed
+
+        if et == "ELLIPSE":
+            center = geom.get("center")
+            if not isinstance(center, dict):
+                return None
+            t_center = _apply_affine(tf, center)
+            major_axis = geom.get("major_axis")
+            minor_axis = geom.get("minor_axis")
+
+            if not isinstance(major_axis, dict):
+                rx = float(geom.get("rx", 0.0))
+                rot = math.radians(float(geom.get("rotation", 0.0)))
+                major_axis = {"x": rx * math.cos(rot), "y": rx * math.sin(rot), "z": 0.0}
+            if not isinstance(minor_axis, dict):
+                ry = float(geom.get("ry", 0.0))
+                rot = math.radians(float(geom.get("rotation", 0.0)))
+                minor_axis = {"x": -ry * math.sin(rot), "y": ry * math.cos(rot), "z": 0.0}
+
+            t_major_axis = _apply_linear(tf, major_axis)
+            t_minor_axis = _apply_linear(tf, minor_axis)
+            t_rx = math.hypot(float(t_major_axis["x"]), float(t_major_axis["y"]))
+            t_ry = math.hypot(float(t_minor_axis["x"]), float(t_minor_axis["y"]))
+            if t_rx <= 1e-12 or t_ry <= 1e-12:
+                return None
+            t_rot = math.degrees(math.atan2(float(t_major_axis["y"]), float(t_major_axis["x"])))
+
+            transformed["geom"] = {
+                "center": t_center,
+                "rx": t_rx,
+                "ry": t_ry,
+                "rotation": t_rot,
+                "start_angle": float(geom.get("start_angle", 0.0)),
+                "end_angle": float(geom.get("end_angle", 360.0)),
+            }
+            if isinstance(geom.get("start"), dict):
+                transformed["geom"]["start"] = _apply_affine(tf, geom.get("start"))  # type: ignore[arg-type]
+            if isinstance(geom.get("end"), dict):
+                transformed["geom"]["end"] = _apply_affine(tf, geom.get("end"))  # type: ignore[arg-type]
+            transformed["bbox"] = _apply_bbox_affine(tf, ent.get("bbox"))
+            if transformed["bbox"] is None:
+                transformed["bbox"] = {
+                    "min": {"x": t_center["x"] - t_rx, "y": t_center["y"] - t_ry, "z": t_center.get("z", 0.0)},
+                    "max": {"x": t_center["x"] + t_rx, "y": t_center["y"] + t_ry, "z": t_center.get("z", 0.0)},
+                }
+            return transformed
+
+        if et == "SPLINE":
+            points_raw = geom.get("points")
+            if not isinstance(points_raw, list):
+                return None
+            points = [_apply_affine(tf, p) for p in points_raw if isinstance(p, dict)]
+            if len(points) < 2:
+                return None
+            transformed["geom"] = {"points": points}
+            transformed["bbox"] = _bbox_from_points(points)
+            return transformed
 
         return None
 
     def _parse_oda_dump(
         self,
         dump_text: str,
-    ) -> Tuple[List[Dict[str, object]], Dict[str, List[Dict[str, object]]], List[str]]:
+    ) -> Tuple[
+        List[Dict[str, object]],
+        Dict[str, List[Dict[str, object]]],
+        Dict[str, List[Dict[str, object]]],
+        List[str],
+        Dict[str, Dict[str, object]],
+    ]:
         spaces_by_id: Dict[str, Dict[str, object]] = {}
         entities_by_space: Dict[str, List[Dict[str, object]]] = {}
+        block_refs_by_space: Dict[str, List[Dict[str, object]]] = {}
         warnings: List[str] = []
+        layer_styles = self._extract_layer_styles(dump_text)
+        text_styles = self._extract_text_styles(dump_text)
 
         current_block_name: Optional[str] = None
         current_block_layout = False
-        current_space_id: Optional[str] = None
+        current_block_origin: Optional[Dict[str, float]] = None
+        current_block_entities: List[Dict[str, object]] = []
         current_entity: Optional[Dict[str, object]] = None
 
-        def ensure_space(block_name: str) -> str:
-            sid, display_name, kind = _space_from_block_name(block_name)
-            if sid not in spaces_by_id:
-                spaces_by_id[sid] = {"id": sid, "display_name": display_name, "kind": kind}
-            return sid
+        block_order: List[str] = []
+        block_is_layout: Dict[str, bool] = {}
+        block_entities: Dict[str, List[Dict[str, object]]] = {}
+        block_origin_by_name: Dict[str, Dict[str, float]] = {}
+
+        unresolved_insert_names: set[str] = set()
+        cyclic_insert_names: set[str] = set()
+        capped_spaces: set[str] = set()
+        max_expand_depth = max(8, int(os.environ.get("DWG_BLOCK_EXPAND_MAX_DEPTH", "16")))
 
         def finalize_entity() -> None:
             nonlocal current_entity
-            if not current_entity or not current_space_id:
+            if not current_entity:
                 current_entity = None
                 return
 
@@ -584,17 +2895,25 @@ class DwgServiceCore:
                 etype=str(current_entity["etype"]),
                 handle=str(current_entity["handle"]),
                 lines=list(current_entity["lines"]),
-                space_id=current_space_id,
+                space_id="block",
             )
             if ent is not None:
-                bucket = entities_by_space.setdefault(current_space_id, [])
-                if len(bucket) < self.max_entities_per_space:
-                    bucket.append(ent)
-                elif len(bucket) == self.max_entities_per_space:
-                    warnings.append(
-                        f"Entity cap reached for {current_space_id}: only first {self.max_entities_per_space} entities loaded."
-                    )
+                current_block_entities.append(self._attach_text_font_meta(ent, text_styles))
             current_entity = None
+
+        def finalize_block() -> None:
+            nonlocal current_block_name, current_block_layout, current_block_entities, current_block_origin
+            if current_block_name:
+                name = current_block_name
+                if name not in block_is_layout:
+                    block_order.append(name)
+                block_is_layout[name] = bool(current_block_layout)
+                block_entities[name] = list(current_block_entities)
+                block_origin_by_name[name] = dict(current_block_origin) if isinstance(current_block_origin, dict) else {"x": 0.0, "y": 0.0, "z": 0.0}
+            current_block_name = None
+            current_block_layout = False
+            current_block_origin = None
+            current_block_entities = []
 
         for raw in dump_text.splitlines():
             line = raw.rstrip("\r\n")
@@ -602,22 +2921,17 @@ class DwgServiceCore:
 
             if stripped == "<AcDbBlockTableRecord>":
                 finalize_entity()
-                current_block_name = None
-                current_block_layout = False
-                current_space_id = None
+                finalize_block()
                 continue
 
             ent_m = _ENTITY_START_RE.match(line)
             if ent_m:
                 finalize_entity()
-                if current_block_layout and current_space_id:
-                    current_entity = {
-                        "etype": ent_m.group("etype"),
-                        "handle": ent_m.group("handle"),
-                        "lines": [],
-                    }
-                else:
-                    current_entity = None
+                current_entity = {
+                    "etype": ent_m.group("etype"),
+                    "handle": ent_m.group("handle"),
+                    "lines": [],
+                }
                 continue
 
             if current_entity is not None:
@@ -627,18 +2941,230 @@ class DwgServiceCore:
             label, value = _parse_label_value(line)
             if label == "name" and value:
                 current_block_name = value
-                if current_block_layout:
-                    current_space_id = ensure_space(current_block_name)
                 continue
             if label == "layout" and value:
                 current_block_layout = value.lower() == "true"
-                if current_block_layout and current_block_name:
-                    current_space_id = ensure_space(current_block_name)
-                else:
-                    current_space_id = None
+                continue
+            if label == "origin" and value:
+                origin = _parse_point_value(value)
+                if origin is not None:
+                    current_block_origin = origin
                 continue
 
         finalize_entity()
+        finalize_block()
+
+        layout_blocks_in_order = [name for name in block_order if block_is_layout.get(name, False)]
+        model_block_name: Optional[str] = None
+        for name in block_order:
+            if name.strip().upper() == "*MODEL_SPACE":
+                model_block_name = name
+                break
+        if model_block_name is None:
+            for name in layout_blocks_in_order:
+                if not name.strip().upper().startswith("*PAPER_SPACE"):
+                    model_block_name = name
+                    break
+        if model_block_name is None and layout_blocks_in_order:
+            model_block_name = layout_blocks_in_order[0]
+
+        root_blocks: List[str] = []
+        if model_block_name and model_block_name in block_entities:
+            root_blocks.append(model_block_name)
+        for name in layout_blocks_in_order:
+            if name == model_block_name:
+                continue
+            root_blocks.append(name)
+        if not root_blocks and model_block_name:
+            root_blocks.append(model_block_name)
+        if not root_blocks and block_order:
+            root_blocks.append(block_order[0])
+
+        def space_id_for_layout_block(name: str) -> str:
+            if model_block_name and name == model_block_name:
+                if "model" not in spaces_by_id:
+                    spaces_by_id["model"] = {"id": "model", "display_name": "Model", "kind": "model"}
+                return "model"
+            sid, display_name, kind = _space_from_block_name(name)
+            if sid == "model":
+                sid = f"layout:{name}"
+                kind = "layout"
+                display_name = name.lstrip("*") or "Layout"
+            if sid not in spaces_by_id:
+                spaces_by_id[sid] = {"id": sid, "display_name": display_name, "kind": kind}
+            return sid
+
+        def append_space_entity(space_id: str, ent: Dict[str, object]) -> None:
+            bucket = entities_by_space.setdefault(space_id, [])
+            if len(bucket) < self.max_entities_per_space:
+                ent_copy = dict(ent)
+                ent_copy["space_id"] = space_id
+                bucket.append(ent_copy)
+            elif space_id not in capped_spaces:
+                capped_spaces.add(space_id)
+                warnings.append(
+                    f"Entity cap reached for {space_id}: only first {self.max_entities_per_space} entities loaded."
+                )
+
+        def append_block_ref(space_id: str, block_ref: Dict[str, object]) -> None:
+            bucket = block_refs_by_space.setdefault(space_id, [])
+            bucket.append(block_ref)
+
+        def build_block_ref_entity(
+            raw_insert: Dict[str, object],
+            parent_tf: Affine2D,
+            path_with_self: Tuple[str, ...],
+            parent_block_id: Optional[str],
+            effective_style: Dict[str, object],
+            space_id: str,
+        ) -> Optional[Dict[str, object]]:
+            insert_geom = raw_insert.get("geom", {}) if isinstance(raw_insert.get("geom"), dict) else {}
+            block_name = str(insert_geom.get("block_name", "")).strip()
+            if not block_name:
+                return None
+            position = insert_geom.get("position")
+            if not isinstance(position, dict):
+                position = {"x": 0.0, "y": 0.0, "z": 0.0}
+
+            insert_tf = self._insert_transform_from_entity(raw_insert)
+            world_insert_tf = _compose_affine(parent_tf, insert_tf)
+            world_pos = _apply_affine(parent_tf, position)
+            sx, sy = _affine_scales(world_insert_tf)
+            rotation_deg = math.degrees(math.atan2(world_insert_tf[2], world_insert_tf[0]))
+            raw_scale = insert_geom.get("scale") if isinstance(insert_geom.get("scale"), dict) else {}
+            scale_z = float(raw_scale.get("z", 1.0))
+
+            block_ref_id = _block_ref_id_from_instance_path(path_with_self)
+            if not block_ref_id:
+                return None
+
+            bbox = _apply_bbox_affine(parent_tf, raw_insert.get("bbox"))
+            if bbox is None:
+                bbox = {"min": dict(world_pos), "max": dict(world_pos)}
+
+            insert_handle = str(raw_insert.get("id", "")).strip() or path_with_self[-1]
+            return {
+                "id": block_ref_id,
+                "type": "BLOCK_REF",
+                "handle": insert_handle,
+                "layer": str(raw_insert.get("layer", "0")),
+                "space_id": space_id,
+                "parent_block_id": parent_block_id,
+                "instance_path": list(path_with_self),
+                "geom": {
+                    "block_name": block_name,
+                    "position": world_pos,
+                    "rotation": rotation_deg,
+                    "scale": {"x": sx, "y": sy, "z": scale_z},
+                    "insert_handle": insert_handle,
+                    "source_type": "BLOCK_REF",
+                },
+                "style": effective_style,
+                "bbox": bbox,
+            }
+
+        def expand_block_into_space(
+            space_id: str,
+            source_block_name: str,
+            tf: Affine2D,
+            stack: Tuple[str, ...],
+            instance_path: Tuple[str, ...],
+            parent_effective_color_index: Optional[int],
+        ) -> None:
+            if len(stack) > max_expand_depth:
+                warnings.append(
+                    f"Block expansion depth exceeded ({max_expand_depth}) for {source_block_name}; deeper references were skipped."
+                )
+                return
+
+            source_entities = block_entities.get(source_block_name, [])
+            for raw_ent in source_entities:
+                etype = str(raw_ent.get("type", "")).upper()
+                raw_style = raw_ent.get("style", {})
+                style_obj = raw_style if isinstance(raw_style, dict) else {"lineweight": "default"}
+                raw_layer = str(raw_ent.get("layer", "0"))
+                effective_style = self._resolve_effective_style(
+                    style_obj=style_obj,
+                    layer_name=raw_layer,
+                    layer_styles=layer_styles,
+                    parent_effective_color_index=parent_effective_color_index,
+                )
+                next_parent_color_idx = effective_style.get("effective_color_index")
+                if not isinstance(next_parent_color_idx, int):
+                    next_parent_color_idx = None
+
+                if etype == "INSERT":
+                    geom = raw_ent.get("geom", {}) if isinstance(raw_ent.get("geom"), dict) else {}
+                    child_name = str(geom.get("block_name", "")).strip()
+                    if not child_name:
+                        continue
+                    if child_name in stack:
+                        if child_name not in cyclic_insert_names:
+                            cyclic_insert_names.add(child_name)
+                            warnings.append(f"Cyclic block reference detected for '{child_name}', skipped recursive expansion.")
+                        continue
+                    if child_name not in block_entities:
+                        if child_name not in unresolved_insert_names:
+                            unresolved_insert_names.add(child_name)
+                            warnings.append(f"Unresolved block reference '{child_name}', skipped.")
+                        continue
+                    insert_tf = self._insert_transform_from_entity(raw_ent)
+                    insert_id = str(raw_ent.get("id", "insert"))
+                    path_with_self = instance_path + (insert_id,)
+                    parent_block_id = _block_ref_id_from_instance_path(instance_path)
+                    block_ref = build_block_ref_entity(
+                        raw_insert=raw_ent,
+                        parent_tf=tf,
+                        path_with_self=path_with_self,
+                        parent_block_id=parent_block_id,
+                        effective_style=effective_style,
+                        space_id=space_id,
+                    )
+                    if block_ref is not None:
+                        append_block_ref(space_id, block_ref)
+                    child_origin = block_origin_by_name.get(child_name, {"x": 0.0, "y": 0.0, "z": 0.0})
+                    child_origin_tf: Affine2D = (
+                        1.0,
+                        0.0,
+                        0.0,
+                        1.0,
+                        -float(child_origin.get("x", 0.0)),
+                        -float(child_origin.get("y", 0.0)),
+                    )
+                    child_tf = _compose_affine(insert_tf, child_origin_tf)
+                    nested_tf = _compose_affine(tf, child_tf)
+                    expand_block_into_space(
+                        space_id,
+                        child_name,
+                        nested_tf,
+                        stack + (child_name,),
+                        path_with_self,
+                        next_parent_color_idx,
+                    )
+                    continue
+
+                transformed = self._transform_entity(raw_ent, tf)
+                if transformed is not None:
+                    base_id = str(transformed.get("id", ""))
+                    if instance_path:
+                        transformed["id"] = f"{base_id}@{'/'.join(instance_path)}"
+                    transformed["instance_path"] = list(instance_path)
+                    transformed["parent_block_id"] = _block_ref_id_from_instance_path(instance_path)
+                    transformed["style"] = effective_style
+                    append_space_entity(space_id, transformed)
+
+        for block_name in root_blocks:
+            sid = space_id_for_layout_block(block_name)
+            root_origin = block_origin_by_name.get(block_name, {"x": 0.0, "y": 0.0, "z": 0.0})
+            root_tf: Affine2D = (
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                -float(root_origin.get("x", 0.0)),
+                -float(root_origin.get("y", 0.0)),
+            )
+            expand_block_into_space(sid, block_name, root_tf, (block_name,), (), None)
 
         if not spaces_by_id:
             spaces_by_id["model"] = {"id": "model", "display_name": "Model", "kind": "model"}
@@ -647,7 +3173,7 @@ class DwgServiceCore:
 
         ordered_ids = sorted(spaces_by_id.keys(), key=lambda sid: (0 if sid == "model" else 1, sid))
         spaces = [spaces_by_id[sid] for sid in ordered_ids]
-        return spaces, entities_by_space, warnings
+        return spaces, entities_by_space, block_refs_by_space, warnings, text_styles
 
     def _external_url(self, path: str) -> str:
         if not self.external_base_url:
@@ -757,6 +3283,7 @@ class DwgServiceCore:
         base: Dict[str, object] = {
             "status": "ok",
             "mode": self.mode,
+            "parser_revision": DWG_CORE_PARSER_REV,
             "external_base_url": self.external_base_url or None,
             "external_prefix": self.external_prefix or None,
             "oda_read_exe": self.oda_read_exe,
@@ -773,6 +3300,25 @@ class DwgServiceCore:
                 "snap": True,
                 "measure": True,
                 "entities": True,
+                "fonts": True,
+                "shx_outline": self.enable_shx_outline,
+                "shx_outline_oda": self._is_oda_vectorize_available(),
+            },
+            "fonts": {
+                "font_dir": str(self.font_dir),
+                "font_map_path": str(self.font_map_path),
+                "font_map_count": len(self.font_map),
+                "font_search_roots": [str(p) for p in self.font_search_roots],
+                "shx_fallback_file": str(self.shx_fallback_file),
+                "shx_fallback_exists": bool(self.shx_fallback_file.exists() and self.shx_fallback_file.is_file()),
+                "shx_fallback_hits_total": int(sum(int(s.shx_fallback_hit_count) for s in self.sessions.values())),
+                "shx_outline_enabled": self.enable_shx_outline,
+                "shx_outline_oda_enabled": self.enable_shx_outline_oda,
+                "force_text_vectorize": self.force_text_vectorize,
+                "vectorize_cache_capacity": self.vectorize_cache_capacity,
+                "vectorize_cache_size": len(self._vectorize_text_cache),
+                "oda_vectorize_exe": self.oda_vectorize_exe,
+                "oda_vectorize_resolve_source": self.oda_vectorize_resolve_source,
             },
         }
 
@@ -867,6 +3413,7 @@ class DwgServiceCore:
                 mode=mode,
                 spaces=spaces,
                 entities_by_space={},
+                text_styles={},
                 warnings=warnings,
                 current_space=current_space,
                 remote_doc_id=remote_doc_id,
@@ -877,6 +3424,7 @@ class DwgServiceCore:
             return {
                 "doc_id": doc_id,
                 "mode": mode,
+                "parser_revision": DWG_CORE_PARSER_REV,
                 "spaces": spaces,
                 "current_space": current_space,
                 "warnings": warnings,
@@ -884,10 +3432,50 @@ class DwgServiceCore:
 
         if self.mode == "oda_cli":
             dump_text = self._run_oda_read_dump(file_path)
-            spaces, entities_by_space, warnings = self._parse_oda_dump(dump_text)
+            spaces, entities_by_space, block_refs_by_space, warnings, text_styles = self._parse_oda_dump(dump_text)
             if not spaces:
                 spaces = [{"id": "model", "display_name": "Model", "kind": "model"}]
             current_space = "model" if any(s.get("id") == "model" for s in spaces) else str(spaces[0].get("id", "model"))
+
+            shx_outline_mode = "none"
+            has_text = self._has_text_entities(entities_by_space)
+            has_shx_text = self._has_shx_text_entities(entities_by_space)
+            has_shx_style_hints = self._has_shx_style_hints(text_styles)
+            should_try_vectorize = (
+                has_text
+                and self.enable_shx_outline
+                and self._is_oda_vectorize_available()
+                and (self.force_text_vectorize or has_shx_text or has_shx_style_hints)
+            )
+            if should_try_vectorize:
+                try:
+                    cache_key = self._vectorize_cache_key(file_path)
+                    vector_text_primitives = self._vectorize_cache_get(cache_key)
+                    if vector_text_primitives is None:
+                        vector_dump = self._run_oda_vectorize_dump(file_path)
+                        vector_text_primitives = self._parse_oda_vectorize_text_primitives(vector_dump)
+                        self._vectorize_cache_put(cache_key, vector_text_primitives)
+                    attached_count = self._attach_oda_vectorized_text_primitives(entities_by_space, vector_text_primitives)
+                    if attached_count > 0:
+                        shx_outline_mode = "oda_vectorize"
+                    elif has_shx_text or has_shx_style_hints:
+                        shx_outline_mode = "stub"
+                        warnings.append(
+                            "SHX ODA outline extraction produced no matched text entities; fallback to stroke emulation."
+                        )
+                except ExternalCoreError as exc:
+                    if has_shx_text or has_shx_style_hints:
+                        shx_outline_mode = "stub"
+                        warnings.append(
+                            f"SHX ODA outline extraction failed ({exc}); fallback to stroke emulation."
+                        )
+            elif (has_shx_text or has_shx_style_hints) and self.enable_shx_outline:
+                shx_outline_mode = "stub"
+                warnings.append(
+                    "OdVectorizeEx not configured/found; SHX uses stroke outline emulation."
+                )
+            elif has_shx_text or has_shx_style_hints:
+                shx_outline_mode = "disabled"
 
             total_entities = sum(len(v) for v in entities_by_space.values())
             if total_entities == 0:
@@ -901,7 +3489,10 @@ class DwgServiceCore:
                 mode="oda_cli",
                 spaces=spaces,
                 entities_by_space=entities_by_space,
+                block_refs_by_space=block_refs_by_space,
+                text_styles=text_styles,
                 warnings=warnings,
+                shx_outline_mode=shx_outline_mode,
                 current_space=current_space,
             )
             session.view_state["entity_count"] = total_entities
@@ -909,8 +3500,10 @@ class DwgServiceCore:
             return {
                 "doc_id": doc_id,
                 "mode": session.mode,
+                "parser_revision": DWG_CORE_PARSER_REV,
                 "spaces": spaces,
                 "current_space": current_space,
+                "shx_outline_mode": shx_outline_mode,
                 "warnings": warnings,
             }
 
@@ -930,12 +3523,14 @@ class DwgServiceCore:
             mode=self.mode,
             spaces=spaces,
             entities_by_space=entities,
+            text_styles={},
             warnings=warnings,
         )
         self.sessions[doc_id] = session
         return {
             "doc_id": doc_id,
             "mode": session.mode,
+            "parser_revision": DWG_CORE_PARSER_REV,
             "spaces": spaces,
             "current_space": session.current_space,
             "warnings": warnings,
@@ -990,7 +3585,7 @@ class DwgServiceCore:
 
         if self.mode == "external_http":
             params: Dict[str, object] = {"space_id": space}
-            if limit is not None and limit > 0:
+            if limit is not None:
                 params["limit"] = int(limit)
             query = urllib_parse.urlencode(params)
             suffix = "/entities"
@@ -998,9 +3593,12 @@ class DwgServiceCore:
                 suffix += f"?{query}"
             return self._external_doc_request(session, "GET", suffix)
 
-        entity_limit = int(limit) if isinstance(limit, int) and limit > 0 else self.default_entity_api_limit
+        if isinstance(limit, int):
+            entity_limit = int(limit) if limit > 0 else self.max_entities_per_space
+        else:
+            entity_limit = self.default_entity_api_limit
         all_entities = list(session.entities_by_space.get(space, []))
-        sliced = all_entities[:entity_limit]
+        sliced = [self._entity_with_primitives(ent) for ent in all_entities[:entity_limit]]
         return {
             "doc_id": doc_id,
             "space_id": space,
@@ -1008,6 +3606,295 @@ class DwgServiceCore:
             "total_count": len(all_entities),
             "truncated": len(all_entities) > entity_limit,
         }
+
+    def list_hierarchy(self, doc_id: str, space_id: Optional[str] = None) -> Optional[Dict[str, object]]:
+        session = self.get_session(doc_id)
+        if not session:
+            return None
+
+        space = space_id or session.current_space
+
+        if self.mode == "external_http":
+            params: Dict[str, object] = {"space_id": space}
+            query = urllib_parse.urlencode(params)
+            suffix = "/hierarchy"
+            if query:
+                suffix += f"?{query}"
+            return self._external_doc_request(session, "GET", suffix)
+
+        all_entities = [self._entity_with_primitives(ent) for ent in session.entities_by_space.get(space, [])]
+        all_block_refs = [self._entity_with_primitives(ref) for ref in session.block_refs_by_space.get(space, [])]
+
+        def _extract_handle(obj: Dict[str, object]) -> str:
+            raw = str(obj.get("handle") or obj.get("id") or "").strip()
+            if not raw:
+                return ""
+            if "@" in raw:
+                raw = raw.split("@", 1)[0]
+            if "/" in raw:
+                raw = raw.rsplit("/", 1)[-1]
+            return raw.upper()
+
+        def _handle_sort_key(obj: Dict[str, object]) -> Tuple[int, int, str]:
+            h = _extract_handle(obj)
+            if not h:
+                return (2, 0, "")
+            try:
+                return (0, int(h, 16), h)
+            except Exception:
+                return (1, 0, h)
+
+        entities_by_parent: Dict[Optional[str], List[Dict[str, object]]] = {}
+        for ent in all_entities:
+            parent_raw = ent.get("parent_block_id")
+            parent = str(parent_raw).strip() if isinstance(parent_raw, str) and str(parent_raw).strip() else None
+            entities_by_parent.setdefault(parent, []).append(ent)
+
+        block_refs_by_parent: Dict[Optional[str], List[Dict[str, object]]] = {}
+        for ref in all_block_refs:
+            parent_raw = ref.get("parent_block_id")
+            parent = str(parent_raw).strip() if isinstance(parent_raw, str) and str(parent_raw).strip() else None
+            block_refs_by_parent.setdefault(parent, []).append(ref)
+
+        def _build_level(parent_block_id: Optional[str], visiting: set[str]) -> List[Dict[str, object]]:
+            objs: List[Dict[str, object]] = []
+            objs.extend(block_refs_by_parent.get(parent_block_id, []))
+            objs.extend(entities_by_parent.get(parent_block_id, []))
+
+            by_type: Dict[str, List[Dict[str, object]]] = {}
+            for obj in objs:
+                t = str(obj.get("type", "UNKNOWN")).upper() or "UNKNOWN"
+                by_type.setdefault(t, []).append(obj)
+
+            level_nodes: List[Dict[str, object]] = []
+            parent_key = parent_block_id or "root"
+            for t in sorted(by_type.keys()):
+                group_items = sorted(by_type[t], key=_handle_sort_key)
+                item_nodes: List[Dict[str, object]] = []
+                for item in group_items:
+                    entity_id = str(item.get("id", "")).strip()
+                    is_block_ref = str(item.get("type", "")).upper() == "BLOCK_REF"
+                    bbox = item.get("bbox") if isinstance(item.get("bbox"), dict) else None
+                    handle = _extract_handle(item)
+                    geom = item.get("geom") if isinstance(item.get("geom"), dict) else {}
+                    block_name = str(geom.get("block_name", "")).strip() if isinstance(geom, dict) else ""
+                    label = handle or entity_id or "--"
+                    if is_block_ref and block_name:
+                        label = f"{label} ({block_name})"
+                    child_nodes: List[Dict[str, object]] = []
+                    if is_block_ref and entity_id and entity_id not in visiting:
+                        next_visiting = set(visiting)
+                        next_visiting.add(entity_id)
+                        child_nodes = _build_level(entity_id, next_visiting)
+                    item_nodes.append(
+                        {
+                            "node_id": f"{'block' if is_block_ref else 'entity'}:{entity_id}",
+                            "node_kind": "block_ref" if is_block_ref else "entity",
+                            "label": label,
+                            "type": str(item.get("type", "")).upper() or "UNKNOWN",
+                            "layer": str(item.get("layer", "0")),
+                            "handle": handle or None,
+                            "entity_id": entity_id,
+                            "parent_block_id": parent_block_id,
+                            "bbox": bbox,
+                            "children": child_nodes,
+                        }
+                    )
+                level_nodes.append(
+                    {
+                        "node_id": f"category:{parent_key}:{t}",
+                        "node_kind": "category",
+                        "label": t,
+                        "type": t,
+                        "layer": None,
+                        "handle": None,
+                        "entity_id": None,
+                        "parent_block_id": parent_block_id,
+                        "bbox": None,
+                        "children": item_nodes,
+                    }
+                )
+            return level_nodes
+
+        tree = _build_level(None, set())
+        return {
+            "doc_id": doc_id,
+            "space_id": space,
+            "nodes": tree,
+            "total_entity_count": len(all_entities),
+            "total_block_ref_count": len(all_block_refs),
+        }
+
+    def _collect_session_fonts(self, session: DwgDocSession) -> List[Dict[str, object]]:
+        aggregated: Dict[str, Dict[str, object]] = {}
+        font_files: Dict[str, str] = {}
+        shx_fallback_hits = 0
+
+        for entities in session.entities_by_space.values():
+            for ent in entities:
+                if str(ent.get("type", "")).upper() != "TEXT":
+                    continue
+                geom = ent.get("geom") if isinstance(ent.get("geom"), dict) else {}
+                if not isinstance(geom, dict):
+                    continue
+
+                font_key = _sanitize_font_key(
+                    geom.get("font_key")
+                    or geom.get("font_style_name")
+                    or geom.get("font_name")
+                    or geom.get("font_family")
+                )
+                style_name = str(geom.get("font_style_name") or geom.get("style_name") or "").strip() or None
+                font_name = str(geom.get("font_name") or style_name or "").strip() or None
+                font_family = str(geom.get("font_family") or _font_family_from_name(font_name or style_name or "")).strip() or None
+                font_kind = str(geom.get("font_kind") or _detect_font_kind(font_name or "")).strip().lower() or "unknown"
+                font_source = str(geom.get("font_source") or ("text_style_table" if style_name else "fallback")).strip() or "fallback"
+
+                record = aggregated.get(font_key)
+                if record is None:
+                    record = {
+                        "key": font_key,
+                        "style_name": style_name,
+                        "name": font_name,
+                        "family": font_family,
+                        "kind": font_kind,
+                        "source": font_source,
+                        "usage_count": 0,
+                    }
+                    aggregated[font_key] = record
+                record["usage_count"] = int(record.get("usage_count", 0)) + 1
+
+        fonts: List[Dict[str, object]] = []
+        for key, record in aggregated.items():
+            name_or_style = record.get("name") or record.get("style_name") or record.get("family") or key
+            resolved = self._resolve_font_file(name_or_style)
+            kind = str(record.get("kind", "unknown")).lower()
+            fallback_shx_hit = False
+            if (
+                not resolved
+                and kind == "shx"
+                and self.enable_shx_outline
+                and self.shx_fallback_file.exists()
+                and self.shx_fallback_file.is_file()
+            ):
+                resolved = self.shx_fallback_file
+                fallback_shx_hit = True
+                shx_fallback_hits += 1
+            file_url: Optional[str] = None
+            reason: Optional[str] = None
+            available = False
+            shx_mode = str(session.shx_outline_mode or "none").strip().lower()
+            if resolved and resolved.exists():
+                resolved_ext_kind = _detect_font_kind(str(resolved))
+                if kind == "unknown":
+                    kind = resolved_ext_kind
+                if kind in ("ttf", "ttc", "otf"):
+                    available = True
+                    file_url = f"/api/dwg/{session.doc_id}/fonts/{urllib_parse.quote(key, safe='')}/file"
+                    font_files[key] = str(resolved)
+                elif kind == "shx":
+                    if self.enable_shx_outline:
+                        available = True
+                        if shx_mode == "oda_vectorize":
+                            if fallback_shx_hit:
+                                reason = f"SHX rendered by ODA vectorized glyph outlines (fallback: {self.shx_fallback_file.name})."
+                            else:
+                                reason = "SHX rendered by ODA vectorized glyph outlines."
+                        else:
+                            if fallback_shx_hit:
+                                reason = f"SHX rendered by server-side stroke outline emulation (fallback: {self.shx_fallback_file.name})."
+                            else:
+                                reason = "SHX rendered by server-side stroke outline emulation."
+                    else:
+                        reason = "SHX font detected: frontend fallback font will be used."
+                else:
+                    reason = "Unsupported font file type."
+            else:
+                if kind == "shx":
+                    if self.enable_shx_outline:
+                        available = True
+                        if shx_mode == "oda_vectorize":
+                            reason = "SHX rendered by ODA vectorized glyph outlines (font file optional)."
+                        else:
+                            reason = "SHX rendered by server-side stroke outline emulation (font file not required)."
+                    else:
+                        reason = "SHX font file not found on server."
+                else:
+                    reason = "Font file not found on server."
+
+            fonts.append(
+                {
+                    "key": key,
+                    "style_name": record.get("style_name"),
+                    "name": record.get("name"),
+                    "family": record.get("family"),
+                    "kind": kind,
+                    "source": record.get("source"),
+                    "usage_count": int(record.get("usage_count", 0)),
+                    "available": available,
+                    "file_name": Path(font_files[key]).name if available and key in font_files else None,
+                    "file_url": file_url,
+                    "reason": reason,
+                    "fallback_shx_hit": fallback_shx_hit,
+                    "fallback_shx_file_name": self.shx_fallback_file.name if fallback_shx_hit else None,
+                }
+            )
+
+        fonts.sort(key=lambda f: (str(f.get("kind", "")), str(f.get("style_name", "")), str(f.get("name", ""))))
+        session.font_files = font_files
+        session.shx_fallback_hit_count = shx_fallback_hits
+        return fonts
+
+    def list_fonts(self, doc_id: str) -> Optional[Dict[str, object]]:
+        session = self.get_session(doc_id)
+        if not session:
+            return None
+
+        if self.mode == "external_http":
+            try:
+                return self._external_doc_request(session, "GET", "/fonts")
+            except ExternalCoreError:
+                # Keep UI usable even if remote core does not provide a dedicated /fonts endpoint.
+                return {"doc_id": doc_id, "fonts": [], "count": 0, "warnings": ["Remote DWG core did not expose /fonts endpoint."]}
+
+        fonts = self._collect_session_fonts(session)
+        warnings: List[str] = []
+        if any(str(f.get("kind")) == "shx" for f in fonts):
+            if self.enable_shx_outline:
+                if str(session.shx_outline_mode).strip().lower() == "oda_vectorize":
+                    warnings.append("SHX fonts are rendered with ODA vectorized glyph outlines.")
+                else:
+                    warnings.append("SHX fonts are rendered with server-side outline emulation.")
+            else:
+                warnings.append("SHX fonts are currently rendered with fallback font in frontend.")
+        if int(session.shx_fallback_hit_count) > 0:
+            warnings.append(f"Fallback SHX applied to {int(session.shx_fallback_hit_count)} font entries: {self.shx_fallback_file.name}.")
+        return {
+            "doc_id": doc_id,
+            "fonts": fonts,
+            "count": len(fonts),
+            "warnings": warnings,
+            "shx_outline_mode": session.shx_outline_mode,
+            "shx_fallback_file": str(self.shx_fallback_file),
+            "shx_fallback_exists": bool(self.shx_fallback_file.exists() and self.shx_fallback_file.is_file()),
+            "shx_fallback_hit_count": int(session.shx_fallback_hit_count),
+        }
+
+    def get_font_file(self, doc_id: str, font_key: str) -> Optional[Dict[str, object]]:
+        session = self.get_session(doc_id)
+        if not session:
+            return None
+        key = _sanitize_font_key(font_key)
+        if key not in session.font_files:
+            # Lazy refresh once to avoid stale cache issues.
+            self._collect_session_fonts(session)
+        path_raw = session.font_files.get(key)
+        if not path_raw:
+            return None
+        p = Path(path_raw)
+        if not p.exists() or not p.is_file():
+            return None
+        return {"doc_id": doc_id, "font_key": key, "path": p}
 
     def set_view(self, doc_id: str, payload: Dict[str, object]) -> Optional[Dict[str, object]]:
         session = self.get_session(doc_id)
@@ -1063,27 +3950,482 @@ class DwgServiceCore:
             "view_state": session.view_state,
         }
 
-    def _iter_space_entities(self, session: DwgDocSession, space_id: str):
-        return session.entities_by_space.get(space_id, [])
+    def _build_shx_outline_primitives(self, geom: Dict[str, object]) -> List[Dict[str, object]]:
+        text = str(geom.get("text", ""))
+        if not text:
+            return []
+        position = geom.get("position")
+        if not isinstance(position, dict):
+            return []
+        lines = text.replace("\r", "").split("\n")
+        if not lines:
+            return []
 
-    def _iter_entity_segments(self, ent: Dict[str, object]) -> List[Tuple[Dict[str, float], Dict[str, float]]]:
+        try:
+            height = float(geom.get("actual_height", geom.get("height", 100.0)))
+        except Exception:
+            height = 100.0
+        if not math.isfinite(height) or height <= 1e-9:
+            return []
+        try:
+            width_factor = float(geom.get("width_factor", 1.0))
+        except Exception:
+            width_factor = 1.0
+        if not math.isfinite(width_factor) or width_factor <= 0:
+            width_factor = 1.0
+        try:
+            oblique_deg = float(geom.get("oblique", 0.0))
+        except Exception:
+            oblique_deg = 0.0
+        try:
+            rotation_deg = float(geom.get("rotation", 0.0))
+        except Exception:
+            rotation_deg = 0.0
+        mirrored_x = bool(geom.get("mirrored_x", False))
+        mirrored_y = bool(geom.get("mirrored_y", False))
+        is_mtext = bool(geom.get("is_mtext", False))
+
+        shear = math.tan(math.radians(oblique_deg))
+        rot_rad = math.radians(rotation_deg)
+        cos_r = math.cos(rot_rad)
+        sin_r = math.sin(rot_rad)
+
+        base_x = float(position.get("x", 0.0))
+        base_y = float(position.get("y", 0.0))
+        base_z = float(position.get("z", 0.0))
+
+        line_gap = height * (1.22 if is_mtext else 1.0)
+        char_w = height * 0.62 * width_factor
+        advance = height * 0.72 * width_factor
+
+        outlines: List[Dict[str, object]] = []
+        for line_index, line in enumerate(lines):
+            x_cursor = 0.0
+            y_offset = -line_index * line_gap
+            for ch in line:
+                glyph = _shx_char_strokes(ch)
+                if glyph is None:
+                    # Unknown character, let frontend text fallback render this entity.
+                    return []
+                if glyph:
+                    for stroke in glyph:
+                        if len(stroke) < 2:
+                            continue
+                        points: List[Dict[str, float]] = []
+                        for px, py in stroke:
+                            x_local = x_cursor + px * char_w
+                            y_local = y_offset + py * height
+                            if mirrored_x:
+                                x_local = -x_local
+                            if mirrored_y:
+                                y_local = -y_local
+                            x_sheared = x_local + shear * y_local
+                            y_sheared = y_local
+                            xr = x_sheared * cos_r - y_sheared * sin_r
+                            yr = x_sheared * sin_r + y_sheared * cos_r
+                            points.append({"x": base_x + xr, "y": base_y + yr, "z": base_z})
+                        if len(points) >= 2:
+                            outlines.append(
+                                {
+                                    "kind": "polyline",
+                                    "points": points,
+                                    "closed": False,
+                                    "subtype": "shx_outline",
+                                }
+                            )
+                x_cursor += advance
+        return outlines
+
+    def _entity_primitives(self, ent: Dict[str, object]) -> List[Dict[str, object]]:
+        geom = ent.get("geom", {}) if isinstance(ent.get("geom"), dict) else {}
+        existing = geom.get("primitives")
+        if isinstance(existing, list) and existing:
+            return [p for p in existing if isinstance(p, dict)]
+
         et = str(ent.get("type", "")).upper()
-        geom = ent.get("geom") if isinstance(ent.get("geom"), dict) else {}
-        segments: List[Tuple[Dict[str, float], Dict[str, float]]] = []
+        out: List[Dict[str, object]] = []
         if et == "LINE":
             start = geom.get("start")
             end = geom.get("end")
             if isinstance(start, dict) and isinstance(end, dict):
-                segments.append((start, end))
-        elif et == "POLYLINE":
+                out.append({"kind": "line", "start": start, "end": end})
+            return out
+
+        if et in ("POLYLINE", "SPLINE"):
+            points = geom.get("vertices") if et == "POLYLINE" else geom.get("points")
+            if isinstance(points, list):
+                clean = [p for p in points if isinstance(p, dict)]
+                if len(clean) >= 2:
+                    out.append({"kind": "polyline", "points": clean, "closed": bool(geom.get("closed", False))})
+            return out
+
+        if et == "CIRCLE":
+            center = geom.get("center")
+            radius = geom.get("radius")
+            if isinstance(center, dict) and isinstance(radius, (int, float)) and float(radius) > 0:
+                out.append({"kind": "circle", "center": center, "radius": float(radius)})
+            return out
+
+        if et == "ARC":
+            center = geom.get("center")
+            radius = geom.get("radius")
+            if isinstance(center, dict) and isinstance(radius, (int, float)) and float(radius) > 0:
+                obj: Dict[str, object] = {"kind": "arc", "center": center, "radius": float(radius)}
+                if isinstance(geom.get("start"), dict):
+                    obj["start"] = geom.get("start")
+                if isinstance(geom.get("end"), dict):
+                    obj["end"] = geom.get("end")
+                if isinstance(geom.get("start_angle"), (int, float)):
+                    obj["start_angle"] = float(geom.get("start_angle"))  # type: ignore[arg-type]
+                if isinstance(geom.get("end_angle"), (int, float)):
+                    obj["end_angle"] = float(geom.get("end_angle"))  # type: ignore[arg-type]
+                out.append(obj)
+            return out
+
+        if et == "ELLIPSE":
+            center = geom.get("center")
+            rx = geom.get("rx")
+            ry = geom.get("ry")
+            if isinstance(center, dict) and isinstance(rx, (int, float)) and isinstance(ry, (int, float)):
+                obj = {
+                    "kind": "ellipse",
+                    "center": center,
+                    "rx": float(rx),
+                    "ry": float(ry),
+                    "rotation": float(geom.get("rotation", 0.0)),
+                    "start_angle": float(geom.get("start_angle", 0.0)),
+                    "end_angle": float(geom.get("end_angle", 360.0)),
+                }
+                if isinstance(geom.get("start"), dict):
+                    obj["start"] = geom.get("start")
+                if isinstance(geom.get("end"), dict):
+                    obj["end"] = geom.get("end")
+                out.append(obj)
+            return out
+
+        if et == "TEXT":
+            font_kind = str(geom.get("font_kind", "")).strip().lower()
+            if self.enable_shx_outline and font_kind == "shx":
+                oda_outlines = geom.get("oda_outline_primitives")
+                if isinstance(oda_outlines, list):
+                    clean_oda = [p for p in oda_outlines if isinstance(p, dict)]
+                    if clean_oda:
+                        return clean_oda
+                shx_outlines = self._build_shx_outline_primitives(geom)
+                if shx_outlines:
+                    return shx_outlines
+            pos = geom.get("position")
+            if isinstance(pos, dict):
+                out.append(
+                    {
+                        "kind": "text",
+                        "text": str(geom.get("text", "")),
+                        "position": pos,
+                        "height": float(geom.get("height", 100.0)),
+                        "rotation": float(geom.get("rotation", 0.0)),
+                        "width_factor": float(geom.get("width_factor", 1.0)),
+                        "oblique": float(geom.get("oblique", 0.0)),
+                        "actual_height": float(geom.get("actual_height", geom.get("height", 100.0))),
+                        "horizontal_mode": geom.get("horizontal_mode"),
+                        "vertical_mode": geom.get("vertical_mode"),
+                        "attachment": geom.get("attachment"),
+                        "mirrored_x": bool(geom.get("mirrored_x", False)),
+                        "mirrored_y": bool(geom.get("mirrored_y", False)),
+                        "is_mtext": bool(geom.get("is_mtext", False)),
+                        "font_key": geom.get("font_key"),
+                        "font_style_name": geom.get("font_style_name"),
+                        "font_name": geom.get("font_name"),
+                        "font_family": geom.get("font_family"),
+                        "font_kind": geom.get("font_kind"),
+                        "font_source": geom.get("font_source"),
+                    }
+                )
+            return out
+
+        if et == "POINT":
+            pos = geom.get("position")
+            if isinstance(pos, dict):
+                out.append({"kind": "point", "position": pos, "display_size": float(geom.get("display_size", 6.0))})
+            return out
+
+        if et == "HATCH":
+            loops = geom.get("loops")
+            if isinstance(loops, list):
+                rings: List[List[Dict[str, float]]] = []
+                for lp in loops:
+                    pts = lp.get("points") if isinstance(lp, dict) else None
+                    if not isinstance(pts, list):
+                        continue
+                    clean = [p for p in pts if isinstance(p, dict)]
+                    if len(clean) >= 2:
+                        rings.append(clean)
+                if rings:
+                    out.append(
+                        {
+                            "kind": "polygon",
+                            "rings": rings,
+                            "filled": bool(geom.get("solid_fill", False)),
+                            "pattern_name": geom.get("pattern_name", "SOLID"),
+                        }
+                    )
+                    for ring in rings:
+                        out.append({"kind": "polyline", "points": ring, "closed": True})
+            return out
+
+        if et == "DIMENSION":
+            line_start = geom.get("line_start")
+            line_end = geom.get("line_end")
+            ext1 = geom.get("ext1")
+            ext2 = geom.get("ext2")
+            if isinstance(ext1, dict) and isinstance(line_start, dict):
+                out.append({"kind": "line", "start": ext1, "end": line_start})
+            if isinstance(ext2, dict) and isinstance(line_end, dict):
+                out.append({"kind": "line", "start": ext2, "end": line_end})
+            if isinstance(line_start, dict) and isinstance(line_end, dict):
+                seg_dx = float(line_end["x"]) - float(line_start["x"])
+                seg_dy = float(line_end["y"]) - float(line_start["y"])
+                dim_len = math.hypot(seg_dx, seg_dy)
+                line_head = dict(line_start)
+                line_tail = dict(line_end)
+                dim_len = _point_distance(line_start, line_end)
+                arrow_len = max(8.0, min(120.0, dim_len * 0.03))
+                arrow_half = arrow_len * 0.55
+                if dim_len > arrow_len * 2.4:
+                    ux = seg_dx / max(dim_len, 1e-9)
+                    uy = seg_dy / max(dim_len, 1e-9)
+                    inset = arrow_len * 0.9
+                    line_head = {
+                        "x": float(line_start["x"]) + ux * inset,
+                        "y": float(line_start["y"]) + uy * inset,
+                        "z": float(line_start.get("z", 0.0)),
+                    }
+                    line_tail = {
+                        "x": float(line_end["x"]) - ux * inset,
+                        "y": float(line_end["y"]) - uy * inset,
+                        "z": float(line_end.get("z", 0.0)),
+                    }
+                out.append({"kind": "line", "start": line_head, "end": line_tail})
+                in1 = (float(line_end["x"]) - float(line_start["x"]), float(line_end["y"]) - float(line_start["y"]))
+                in2 = (float(line_start["x"]) - float(line_end["x"]), float(line_start["y"]) - float(line_end["y"]))
+                tri1 = _arrow_marker_triangle_points(line_start, in1, arrow_len, arrow_half)
+                tri2 = _arrow_marker_triangle_points(line_end, in2, arrow_len, arrow_half)
+                if tri1:
+                    out.append(
+                        {
+                            "kind": "polygon",
+                            "rings": [tri1],
+                            "filled": True,
+                            "pattern_name": "ARROW",
+                            "arrow_fill": True,
+                            "subtype": "dim_arrow_fill",
+                        }
+                    )
+                if tri2:
+                    out.append(
+                        {
+                            "kind": "polygon",
+                            "rings": [tri2],
+                            "filled": True,
+                            "pattern_name": "ARROW",
+                            "arrow_fill": True,
+                            "subtype": "dim_arrow_fill",
+                        }
+                    )
+            text = str(geom.get("text", "")).strip()
+            text_pos = geom.get("text_position")
+            if text and isinstance(text_pos, dict):
+                text_height = geom.get("text_height")
+                if not isinstance(text_height, (int, float)):
+                    bbox = ent.get("bbox")
+                    if isinstance(bbox, dict) and isinstance(bbox.get("min"), dict) and isinstance(bbox.get("max"), dict):
+                        h = abs(float(bbox["max"]["y"]) - float(bbox["min"]["y"]))
+                        text_height = max(1.0, h * 0.12)
+                    else:
+                        text_height = 20.0
+                out.append(
+                    {
+                        "kind": "text",
+                        "text": text,
+                        "position": text_pos,
+                        "height": float(text_height),
+                        "actual_height": float(text_height),
+                        "rotation": float(geom.get("rotation", 0.0)),
+                        "width_factor": 1.0,
+                        "oblique": 0.0,
+                        "horizontal_mode": "kTextCenter",
+                        "vertical_mode": "kTextMiddle",
+                        "attachment": "",
+                        "mirrored_x": False,
+                        "mirrored_y": False,
+                        "is_mtext": False,
+                        "text_mask": True,
+                        "text_mask_padding": 0.25,
+                        "subtype": "dimension_text",
+                    }
+                )
+            return out
+
+        if et == "LEADER":
+            points = geom.get("points")
+            if isinstance(points, list):
+                clean = [p for p in points if isinstance(p, dict)]
+                if len(clean) >= 2:
+                    out.append({"kind": "polyline", "points": clean, "closed": False})
+                    if bool(geom.get("has_arrowhead", False)):
+                        tip = clean[0]
+                        toward = clean[1]
+                        seg_len = _point_distance(tip, toward)
+                        arrow_len = max(6.0, min(80.0, seg_len * 0.25))
+                        arrow_half = arrow_len * 0.5
+                        inward = (float(toward["x"]) - float(tip["x"]), float(toward["y"]) - float(tip["y"]))
+                        tri = _arrow_marker_triangle_points(tip, inward, arrow_len, arrow_half)
+                        if tri:
+                            out.append(
+                                {
+                                    "kind": "polygon",
+                                    "rings": [tri],
+                                    "filled": True,
+                                    "pattern_name": "ARROW",
+                                    "arrow_fill": True,
+                                    "subtype": "leader_arrow_fill",
+                                }
+                            )
+            return out
+
+        if et == "WIPEOUT":
             vertices = geom.get("vertices")
             if isinstance(vertices, list):
-                for i in range(len(vertices) - 1):
-                    a = vertices[i]
-                    b = vertices[i + 1]
-                    if isinstance(a, dict) and isinstance(b, dict):
-                        segments.append((a, b))
+                clean = [p for p in vertices if isinstance(p, dict)]
+                if len(clean) >= 3:
+                    out.append({"kind": "polygon", "rings": [clean], "filled": True, "pattern_name": "WIPEOUT", "wipeout": True})
+            return out
+
+        return out
+
+    def _entity_with_primitives(self, ent: Dict[str, object]) -> Dict[str, object]:
+        geom = ent.get("geom")
+        if not isinstance(geom, dict):
+            return ent
+        out = dict(ent)
+        geom_out = dict(geom)
+        geom_out["source_type"] = str(geom_out.get("source_type") or str(ent.get("type", "")).upper())
+        primitives = self._entity_primitives(ent)
+        if primitives:
+            geom_out["primitives"] = primitives
+        out["geom"] = geom_out
+        return out
+
+    def _iter_space_entities(self, session: DwgDocSession, space_id: str):
+        return session.entities_by_space.get(space_id, [])
+
+    def _iter_space_block_refs(self, session: DwgDocSession, space_id: str):
+        return session.block_refs_by_space.get(space_id, [])
+
+    def _iter_entity_segments(self, ent: Dict[str, object]) -> List[Tuple[Dict[str, float], Dict[str, float]]]:
+        segments: List[Tuple[Dict[str, float], Dict[str, float]]] = []
+        for primitive in self._entity_primitives(ent):
+            kind = str(primitive.get("kind", "")).lower()
+            if kind == "line":
+                start = primitive.get("start")
+                end = primitive.get("end")
+                if isinstance(start, dict) and isinstance(end, dict):
+                    segments.append((start, end))
+                continue
+            if kind == "polyline":
+                pts = primitive.get("points")
+                if not isinstance(pts, list):
+                    continue
+                clean = [p for p in pts if isinstance(p, dict)]
+                if len(clean) < 2:
+                    continue
+                for i in range(len(clean) - 1):
+                    segments.append((clean[i], clean[i + 1]))
+                if bool(primitive.get("closed", False)) and len(clean) > 2 and _point_distance(clean[0], clean[-1]) > 1e-6:
+                    segments.append((clean[-1], clean[0]))
+                continue
+            if kind == "polygon":
+                rings = primitive.get("rings")
+                if not isinstance(rings, list):
+                    continue
+                for ring in rings:
+                    if not isinstance(ring, list):
+                        continue
+                    clean = [p for p in ring if isinstance(p, dict)]
+                    if len(clean) < 2:
+                        continue
+                    for i in range(len(clean) - 1):
+                        segments.append((clean[i], clean[i + 1]))
+                    if _point_distance(clean[0], clean[-1]) > 1e-6:
+                        segments.append((clean[-1], clean[0]))
+                continue
+            if kind in ("circle", "arc"):
+                center = primitive.get("center")
+                radius = primitive.get("radius")
+                if not isinstance(center, dict) or not isinstance(radius, (int, float)) or float(radius) <= 0:
+                    continue
+                sa = float(primitive.get("start_angle", 0.0 if kind == "arc" else 0.0))
+                ea = float(primitive.get("end_angle", 360.0 if kind == "arc" else 360.0))
+                if kind == "arc" and isinstance(primitive.get("start"), dict) and isinstance(primitive.get("end"), dict):
+                    sa = _point_angle_from_center(center, primitive.get("start"))  # type: ignore[arg-type]
+                    ea = _point_angle_from_center(center, primitive.get("end"))  # type: ignore[arg-type]
+                delta = ((ea - sa) % 360.0 + 360.0) % 360.0
+                if kind == "arc" and delta <= 1e-9:
+                    delta = 360.0
+                steps = max(8, min(256, int(abs(delta) / 12.0) + 1))
+                pts: List[Dict[str, float]] = []
+                for i in range(steps + 1):
+                    t = i / max(1, steps)
+                    ang = math.radians(sa + delta * t)
+                    pts.append(
+                        {
+                            "x": float(center["x"]) + float(radius) * math.cos(ang),
+                            "y": float(center["y"]) + float(radius) * math.sin(ang),
+                            "z": float(center.get("z", 0.0)),
+                        }
+                    )
+                for i in range(len(pts) - 1):
+                    segments.append((pts[i], pts[i + 1]))
+                continue
+            if kind == "ellipse":
+                center = primitive.get("center")
+                rx = primitive.get("rx")
+                ry = primitive.get("ry")
+                if isinstance(center, dict) and isinstance(rx, (int, float)) and isinstance(ry, (int, float)):
+                    start_a = float(primitive.get("start_angle", 0.0))
+                    end_a = float(primitive.get("end_angle", 360.0))
+                    rot = math.radians(float(primitive.get("rotation", 0.0)))
+                    cos_r = math.cos(rot)
+                    sin_r = math.sin(rot)
+                    delta = ((end_a - start_a) % 360.0 + 360.0) % 360.0
+                    if delta <= 1e-9:
+                        delta = 360.0
+                    steps = max(8, min(256, int(abs(delta) / 10.0) + 1))
+                    pts: List[Dict[str, float]] = []
+                    for i in range(steps + 1):
+                        t = i / max(1, steps)
+                        ang = math.radians(start_a + delta * t)
+                        ex = float(rx) * math.cos(ang)
+                        ey = float(ry) * math.sin(ang)
+                        pts.append(
+                            {
+                                "x": float(center["x"]) + ex * cos_r - ey * sin_r,
+                                "y": float(center["y"]) + ex * sin_r + ey * cos_r,
+                                "z": float(center.get("z", 0.0)),
+                            }
+                        )
+                    for i in range(len(pts) - 1):
+                        segments.append((pts[i], pts[i + 1]))
         return segments
+
+    def _iter_entity_text_points(self, ent: Dict[str, object]) -> List[Dict[str, float]]:
+        points: List[Dict[str, float]] = []
+        for primitive in self._entity_primitives(ent):
+            if str(primitive.get("kind", "")).lower() != "text":
+                continue
+            pos = primitive.get("position")
+            if isinstance(pos, dict):
+                points.append(pos)
+        return points
 
     def pick(self, doc_id: str, payload: Dict[str, object]) -> Optional[Dict[str, object]]:
         session = self.get_session(doc_id)
@@ -1096,26 +4438,54 @@ class DwgServiceCore:
         space_id = payload.get("space_id") if isinstance(payload.get("space_id"), str) else session.current_space
         point = payload.get("point") if isinstance(payload.get("point"), dict) else None
         tol = float(payload.get("tolerance", 8.0))
+        selection_scope = str(payload.get("selection_scope", "entity") or "entity").strip().lower()
+        parent_block_id = payload.get("parent_block_id") if isinstance(payload.get("parent_block_id"), str) else None
         if not point or "x" not in point or "y" not in point:
-            return {"doc_id": doc_id, "space_id": space_id, "picked": []}
+            return {"doc_id": doc_id, "space_id": space_id, "selection_scope": selection_scope, "picked": []}
+
+        if selection_scope == "block":
+            best_block = None
+            best_dist = float("inf")
+            for block_ref in self._iter_space_block_refs(session, space_id):
+                dist = _distance_to_bbox_2d(point, block_ref.get("bbox"))
+                if dist is None:
+                    continue
+                if dist < best_dist:
+                    best_dist = dist
+                    best_block = block_ref
+            picked: List[Dict[str, object]] = []
+            if best_block is not None and best_dist <= tol:
+                picked.append(
+                    {
+                        "entity_id": best_block.get("id"),
+                        "distance": best_dist,
+                        "picked_kind": "block",
+                        "parent_block_id": best_block.get("parent_block_id"),
+                    }
+                )
+            return {"doc_id": doc_id, "space_id": space_id, "selection_scope": "block", "picked": picked}
 
         best = None
         best_dist = float("inf")
         for ent in self._iter_space_entities(session, space_id):
+            if parent_block_id is not None and str(ent.get("parent_block_id") or "") != parent_block_id:
+                continue
             etype = str(ent.get("type", "")).upper()
             geom = ent.get("geom", {})
             d: Optional[float] = None
 
-            if etype in ("LINE", "POLYLINE"):
-                for a, b in self._iter_entity_segments(ent):
-                    dist, _, _ = _distance_to_segment(point, a, b)
-                    if d is None or dist < d:
-                        d = dist
-            elif etype == "CIRCLE":
+            for a, b in self._iter_entity_segments(ent):
+                dist, _, _ = _distance_to_segment(point, a, b)
+                if d is None or dist < d:
+                    d = dist
+
+            if etype == "CIRCLE":
                 center = geom.get("center")
                 radius = geom.get("radius")
                 if isinstance(center, dict) and isinstance(radius, (int, float)):
-                    d = abs(_point_distance(point, center) - float(radius))
+                    radial = abs(_point_distance(point, center) - float(radius))
+                    if d is None or radial < d:
+                        d = radial
             elif etype == "ARC":
                 center = geom.get("center")
                 radius = geom.get("radius")
@@ -1135,7 +4505,26 @@ class DwgServiceCore:
                                 endpoint_distances.append(_point_distance(point, end))
                             if endpoint_distances:
                                 radial_dist = min(radial_dist, min(endpoint_distances))
-                    d = radial_dist
+                    if d is None or radial_dist < d:
+                        d = radial_dist
+            elif etype == "POINT":
+                pos = geom.get("position")
+                if isinstance(pos, dict):
+                    pt_dist = _point_distance(point, pos)
+                    if d is None or pt_dist < d:
+                        d = pt_dist
+
+            text_points = self._iter_entity_text_points(ent)
+            for text_point in text_points:
+                td = _point_distance(point, text_point)
+                if d is None or td < d:
+                    d = td
+
+            # Text-like entities should be pickable across their rendered extents, not only insertion point.
+            if text_points:
+                bbox_dist = _distance_to_bbox_2d(point, ent.get("bbox"))
+                if bbox_dist is not None and (d is None or bbox_dist < d):
+                    d = bbox_dist
 
             if d is not None and d < best_dist:
                 best_dist = d
@@ -1143,9 +4532,16 @@ class DwgServiceCore:
 
         picked: List[Dict[str, object]] = []
         if best is not None and best_dist <= tol:
-            picked.append({"entity_id": best["id"], "distance": best_dist})
+            picked.append(
+                {
+                    "entity_id": best["id"],
+                    "distance": best_dist,
+                    "picked_kind": "entity",
+                    "parent_block_id": best.get("parent_block_id"),
+                }
+            )
 
-        return {"doc_id": doc_id, "space_id": space_id, "picked": picked}
+        return {"doc_id": doc_id, "space_id": space_id, "selection_scope": "entity", "picked": picked}
 
     def snap(self, doc_id: str, payload: Dict[str, object]) -> Optional[Dict[str, object]]:
         session = self.get_session(doc_id)
@@ -1167,19 +4563,19 @@ class DwgServiceCore:
             etype = str(ent.get("type", "")).upper()
             geom = ent.get("geom", {})
 
-            if etype in ("LINE", "POLYLINE"):
-                for a, b in self._iter_entity_segments(ent):
-                    if "endpoint" in modes:
-                        candidates.append((_point_distance(point, a), a, "endpoint"))
-                        candidates.append((_point_distance(point, b), b, "endpoint"))
-                    if "midpoint" in modes:
-                        mid = {
-                            "x": (float(a["x"]) + float(b["x"])) * 0.5,
-                            "y": (float(a["y"]) + float(b["y"])) * 0.5,
-                            "z": 0.0,
-                        }
-                        candidates.append((_point_distance(point, mid), mid, "midpoint"))
-            elif etype == "CIRCLE" and "center" in modes:
+            for a, b in self._iter_entity_segments(ent):
+                if "endpoint" in modes:
+                    candidates.append((_point_distance(point, a), a, "endpoint"))
+                    candidates.append((_point_distance(point, b), b, "endpoint"))
+                if "midpoint" in modes:
+                    mid = {
+                        "x": (float(a["x"]) + float(b["x"])) * 0.5,
+                        "y": (float(a["y"]) + float(b["y"])) * 0.5,
+                        "z": 0.0,
+                    }
+                    candidates.append((_point_distance(point, mid), mid, "midpoint"))
+
+            if etype == "CIRCLE" and "center" in modes:
                 center = geom.get("center")
                 if isinstance(center, dict):
                     candidates.append((_point_distance(point, center), center, "center"))
@@ -1194,6 +4590,10 @@ class DwgServiceCore:
                         candidates.append((_point_distance(point, start), start, "endpoint"))
                     if isinstance(end, dict):
                         candidates.append((_point_distance(point, end), end, "endpoint"))
+            elif etype == "POINT":
+                pos = geom.get("position")
+                if "endpoint" in modes and isinstance(pos, dict):
+                    candidates.append((_point_distance(point, pos), pos, "endpoint"))
 
         if not candidates:
             return {"doc_id": doc_id, "space_id": space_id, "snapped": False, "point": point, "mode": None}
@@ -1245,7 +4645,11 @@ class DwgServiceCore:
         for space_entities in session.entities_by_space.values():
             for ent in space_entities:
                 if ent.get("id") == entity_id:
-                    return {"doc_id": doc_id, "entity": ent}
+                    return {"doc_id": doc_id, "entity": self._entity_with_primitives(ent)}
+        for space_block_refs in session.block_refs_by_space.values():
+            for ref in space_block_refs:
+                if ref.get("id") == entity_id:
+                    return {"doc_id": doc_id, "entity": self._entity_with_primitives(ref)}
         return {"doc_id": doc_id, "entity": None}
 
     def cleanup_expired(self, max_age_sec: int = 3600) -> int:
