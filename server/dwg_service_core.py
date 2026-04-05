@@ -26,6 +26,7 @@ from urllib import request as urllib_request
 
 Affine2D = Tuple[float, float, float, float, float, float]
 DWG_CORE_PARSER_REV = "2026-03-29-r24"
+DEFAULT_LINEWEIGHT_MM = 0.25
 
 
 def _point_distance(a: Dict[str, float], b: Dict[str, float]) -> float:
@@ -257,6 +258,176 @@ def _parse_float_value(value: str) -> Optional[float]:
         return None
 
 
+def _lineweight_to_mm(raw: object) -> Optional[float]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    lower = text.lower()
+    if lower in ("default", "bylayer", "byblock", "klnwtbylayer", "klnwtbyblock", "klnwtbylwdefault"):
+        return None
+    m = re.match(r"^klnwt(\d+)$", lower)
+    if m:
+        try:
+            centi_mm = int(m.group(1))
+            if centi_mm <= 0:
+                return None
+            return float(centi_mm) / 100.0
+        except Exception:
+            return None
+    try:
+        n = float(text)
+        if math.isfinite(n) and n > 0:
+            return n
+    except Exception:
+        return None
+    return None
+
+
+def _is_full_circle_by_points(start: Optional[Dict[str, float]], end: Optional[Dict[str, float]]) -> bool:
+    if not isinstance(start, dict) or not isinstance(end, dict):
+        return False
+    return _point_distance(start, end) <= 1e-6
+
+
+def _sample_hatch_arc_points(
+    center: Dict[str, float],
+    radius: float,
+    start_deg: float,
+    end_deg: float,
+    clockwise: bool,
+    full_circle_hint: bool,
+) -> List[Dict[str, float]]:
+    if radius <= 1e-9:
+        return []
+    s = _normalize_angle_deg(start_deg)
+    e = _normalize_angle_deg(end_deg)
+    if full_circle_hint:
+        sweep = -360.0 if clockwise else 360.0
+    elif clockwise:
+        sweep = -((_normalize_angle_deg(s - e)) or 360.0)
+    else:
+        sweep = (_normalize_angle_deg(e - s)) or 360.0
+
+    steps = max(12, min(360, int(abs(sweep) / 8.0) + 1))
+    pts: List[Dict[str, float]] = []
+    cx = float(center.get("x", 0.0))
+    cy = float(center.get("y", 0.0))
+    cz = float(center.get("z", 0.0))
+    for i in range(steps + 1):
+        t = i / max(1, steps)
+        ang = math.radians(s + sweep * t)
+        pts.append(
+            {
+                "x": cx + radius * math.cos(ang),
+                "y": cy + radius * math.sin(ang),
+                "z": cz,
+            }
+        )
+    return pts
+
+
+def _append_hatch_point(points: List[Dict[str, float]], p: Dict[str, float]) -> None:
+    if not isinstance(p, dict):
+        return
+    if not points:
+        points.append(p)
+        return
+    if _point_distance(points[-1], p) > 1e-6:
+        points.append(p)
+
+
+def _build_hatch_loop_points_from_edges(loop_obj: Dict[str, object]) -> List[Dict[str, float]]:
+    edges = loop_obj.get("edges")
+    if not isinstance(edges, list) or not edges:
+        raw_points = loop_obj.get("points")
+        if not isinstance(raw_points, list):
+            return []
+        return [p for p in raw_points if isinstance(p, dict)]
+
+    out: List[Dict[str, float]] = []
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        edge_kind = str(edge.get("kind", "")).strip().lower()
+        is_arc_edge = (
+            "circarc2d" in edge_kind
+            or "circulararc" in edge_kind
+            or ("arc" in edge_kind and "line" not in edge_kind and "ellipse" not in edge_kind)
+        )
+        if is_arc_edge:
+            center = edge.get("center")
+            radius_raw = edge.get("radius")
+            if not isinstance(center, dict) or not isinstance(radius_raw, (int, float)):
+                continue
+            radius = abs(float(radius_raw))
+            start_pt = edge.get("start_point") if isinstance(edge.get("start_point"), dict) else None
+            end_pt = edge.get("end_point") if isinstance(edge.get("end_point"), dict) else None
+            start_angle_raw = edge.get("start_angle")
+            end_angle_raw = edge.get("end_angle")
+            if isinstance(start_angle_raw, (int, float)):
+                start_deg = float(start_angle_raw)
+            elif isinstance(start_pt, dict):
+                start_deg = _point_angle_from_center(center, start_pt)
+            else:
+                start_deg = 0.0
+            if isinstance(end_angle_raw, (int, float)):
+                end_deg = float(end_angle_raw)
+            elif isinstance(end_pt, dict):
+                end_deg = _point_angle_from_center(center, end_pt)
+            else:
+                end_deg = start_deg
+            clockwise = bool(edge.get("clockwise", False))
+            full_circle_hint = _is_full_circle_by_points(start_pt, end_pt)
+            if not full_circle_hint:
+                try:
+                    delta_hint = abs(_normalize_angle_deg(float(end_deg) - float(start_deg)))
+                    full_circle_hint = delta_hint <= 1e-9
+                except Exception:
+                    full_circle_hint = False
+            pts = _sample_hatch_arc_points(
+                center=center,
+                radius=radius,
+                start_deg=start_deg,
+                end_deg=end_deg,
+                clockwise=clockwise,
+                full_circle_hint=full_circle_hint,
+            )
+            for p in pts:
+                _append_hatch_point(out, p)
+            continue
+
+        start_point = edge.get("start_point")
+        end_point = edge.get("end_point")
+        if isinstance(start_point, dict):
+            _append_hatch_point(out, start_point)
+        if isinstance(end_point, dict):
+            _append_hatch_point(out, end_point)
+
+    return out
+
+
+def _normalize_dimblk_name(raw: object) -> Optional[str]:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    if s.lower() in ("null", "none"):
+        return None
+    return s
+
+
+def _normalize_arrow_style_name(raw: object) -> str:
+    s = str(raw or "").strip().lower()
+    if not s or s in ("null", "none"):
+        return "closed_filled"
+    if "archtick" in s or "tick" in s or "oblique" in s:
+        return "archtick"
+    if "open" in s and "filled" not in s:
+        return "open"
+    if "dot" in s:
+        return "dot"
+    return "closed_filled"
+
+
 def _clean_oda_text_value(raw: object) -> str:
     s = str(raw or "")
     if s == '""':
@@ -337,6 +508,29 @@ def _arrow_marker_triangle_points(
     b1 = {"x": tx + ux * arrow_len + nx * arrow_half_width, "y": ty + uy * arrow_len + ny * arrow_half_width, "z": tz}
     b2 = {"x": tx + ux * arrow_len - nx * arrow_half_width, "y": ty + uy * arrow_len - ny * arrow_half_width, "z": tz}
     return [dict(tip), b1, b2, dict(tip)]
+
+
+def _arrow_marker_archtick_segment(
+    tip: Dict[str, float],
+    inward_dir: Tuple[float, float],
+    tick_len: float,
+) -> Optional[Tuple[Dict[str, float], Dict[str, float]]]:
+    ux, uy = inward_dir
+    dn = math.hypot(ux, uy)
+    if dn <= 1e-9:
+        return None
+    ux /= dn
+    uy /= dn
+    nx = -uy
+    ny = ux
+    tx = float(tip.get("x", 0.0))
+    ty = float(tip.get("y", 0.0))
+    tz = float(tip.get("z", 0.0))
+    along = tick_len * 0.45
+    across = tick_len * 0.65
+    p1 = {"x": tx + ux * along + nx * across, "y": ty + uy * along + ny * across, "z": tz}
+    p2 = {"x": tx - ux * along - nx * across, "y": ty - uy * along - ny * across, "z": tz}
+    return p1, p2
 
 
 def _parse_aci_from_color_name(value: object) -> Optional[int]:
@@ -592,6 +786,17 @@ class DwgDocSession:
     shx_fallback_hit_count: int = 0
     warnings: List[str] = field(default_factory=list)
     shx_outline_mode: str = "none"
+    shx_detected: bool = False
+    shx_true_outline: bool = False
+    shx_vectorize_attempted: bool = False
+    shx_vectorize_attached_count: int = 0
+    shx_vectorize_error: Optional[str] = None
+    shx_fallback_text_count: int = 0
+    shx_missing_original_fonts: List[str] = field(default_factory=list)
+    shx_resolved_original_fonts: List[str] = field(default_factory=list)
+    shx_fallback_file_name: Optional[str] = None
+    shx_diagnostics_unavailable: bool = False
+    shx_debug_match: Optional[Dict[str, object]] = None
     remote_doc_id: Optional[str] = None
 
 
@@ -618,6 +823,7 @@ class DwgServiceCore:
         self.oda_timeout_sec = max(5.0, float(os.environ.get("DWG_ODA_TIMEOUT_SEC", "60")))
         self.max_entities_per_space = max(500, int(os.environ.get("DWG_ODA_MAX_ENTITIES_PER_SPACE", "120000")))
         self.default_entity_api_limit = max(200, int(os.environ.get("DWG_ENTITY_API_DEFAULT_LIMIT", "6000")))
+        self.default_lineweight_mm = max(0.01, float(os.environ.get("DWG_LINEWEIGHT_DEFAULT_MM", str(DEFAULT_LINEWEIGHT_MM))))
         self.vectorize_cache_capacity = max(2, int(os.environ.get("DWG_VECTORIZE_CACHE_CAPACITY", "8")))
         self.oda_profile = os.environ.get("ODA_PROFILE", "").strip() or ("win-x64" if os.name == "nt" else "linux-x64")
         self.oda_version = os.environ.get("ODA_VERSION", "").strip() or "2026.03.25-v1"
@@ -627,6 +833,7 @@ class DwgServiceCore:
         self.oda_read_exe = self._resolve_oda_read_exe(os.environ.get("ODA_READ_EXE", "").strip())
         self.enable_shx_outline = os.environ.get("DWG_ENABLE_SHX_OUTLINE", "1").strip().lower() not in ("0", "false", "no")
         self.enable_shx_outline_oda = os.environ.get("DWG_ENABLE_SHX_OUTLINE_ODA", "1").strip().lower() not in ("0", "false", "no")
+        self.enable_shx_debug_match = os.environ.get("DWG_SHX_DEBUG_MATCH", "0").strip().lower() in ("1", "true", "yes")
         self.force_text_vectorize = os.environ.get("DWG_FORCE_TEXT_VECTORIZE", "0").strip().lower() in ("1", "true", "yes")
         self.oda_vectorize_resolve_source: Optional[str] = None
         self.oda_vectorize_exe = self._resolve_oda_vectorize_exe(os.environ.get("ODA_VECTORIZE_EXE", "").strip())
@@ -1005,6 +1212,32 @@ class DwgServiceCore:
             stale = self._vectorize_cache_order.pop(0)
             self._vectorize_text_cache.pop(stale, None)
 
+    def _build_vectorize_parse_meta_from_primitives(self, data: Dict[str, List[Dict[str, object]]]) -> Dict[str, object]:
+        if not isinstance(data, dict):
+            return {
+                "vectorize_text_entity_count": 0,
+                "vectorize_text_keys_count": 0,
+                "vectorize_primitives_total": 0,
+                "shape_file_text_true_count": 0,
+                "vectorize_text_key_samples": [],
+            }
+        keys = [str(k) for k in data.keys() if str(k).strip()]
+        total_primitives = 0
+        shape_file_hits = 0
+        for plist in data.values():
+            if not isinstance(plist, list):
+                continue
+            total_primitives += len([p for p in plist if isinstance(p, dict)])
+            if any(bool(p.get("shape_file_text")) for p in plist if isinstance(p, dict)):
+                shape_file_hits += 1
+        return {
+            "vectorize_text_entity_count": len(keys),
+            "vectorize_text_keys_count": len(keys),
+            "vectorize_primitives_total": int(total_primitives),
+            "shape_file_text_true_count": int(shape_file_hits),
+            "vectorize_text_key_samples": keys[:20],
+        }
+
     def _outline_point_key(self, p: Dict[str, float], eps: float = 1e-4) -> Tuple[int, int]:
         return (int(round(float(p.get("x", 0.0)) / eps)), int(round(float(p.get("y", 0.0)) / eps)))
 
@@ -1022,6 +1255,45 @@ class DwgServiceCore:
         if closed and len(out) >= 2 and _point_distance(out[0], out[-1]) <= 1e-9 and len(out) == 2:
             return []
         return out
+
+    def _simplify_polyline_points(
+        self,
+        points: List[Dict[str, float]],
+        closed: bool,
+        angle_eps: float = 1e-4,
+    ) -> List[Dict[str, float]]:
+        clean = self._clean_polyline_points(points, closed=closed)
+        if len(clean) < 3:
+            return clean
+
+        work = clean[:-1] if (closed and len(clean) >= 2 and _point_distance(clean[0], clean[-1]) <= 1e-7) else clean
+        if len(work) < 3:
+            return clean
+
+        simplified: List[Dict[str, float]] = [dict(work[0])]
+        for i in range(1, len(work) - 1):
+            prev = simplified[-1]
+            curr = work[i]
+            nxt = work[i + 1]
+
+            v1x = float(curr["x"]) - float(prev["x"])
+            v1y = float(curr["y"]) - float(prev["y"])
+            v2x = float(nxt["x"]) - float(curr["x"])
+            v2y = float(nxt["y"]) - float(curr["y"])
+            n1 = math.hypot(v1x, v1y)
+            n2 = math.hypot(v2x, v2y)
+            if n1 <= 1e-9 or n2 <= 1e-9:
+                continue
+
+            cross = abs(v1x * v2y - v1y * v2x)
+            if cross / (n1 * n2) <= angle_eps:
+                continue
+            simplified.append(dict(curr))
+
+        simplified.append(dict(work[-1]))
+        if closed and len(simplified) >= 3:
+            simplified.append(dict(simplified[0]))
+        return simplified
 
     def _polygon_abs_area(self, ring: List[Dict[str, float]]) -> float:
         if len(ring) < 3:
@@ -1114,7 +1386,7 @@ class DwgServiceCore:
                 if not p:
                     continue
                 loop_points.append(dict(p))
-            loop_points = self._clean_polyline_points(loop_points, closed=True)
+            loop_points = self._simplify_polyline_points(loop_points, closed=True)
             if len(loop_points) < 4:
                 continue
             if self._polygon_abs_area(loop_points) <= 1e-4:
@@ -1149,7 +1421,10 @@ class DwgServiceCore:
             if kind == "polyline":
                 points = prim.get("points")
                 if isinstance(points, list):
-                    clean_points = self._clean_polyline_points([p for p in points if isinstance(p, dict)], closed=bool(prim.get("closed", False)))
+                    clean_points = self._simplify_polyline_points(
+                        [p for p in points if isinstance(p, dict)],
+                        closed=bool(prim.get("closed", False)),
+                    )
                     if len(clean_points) >= 2:
                         copy_prim = dict(prim)
                         copy_prim["points"] = clean_points
@@ -1168,7 +1443,7 @@ class DwgServiceCore:
                     optimized.append(
                         {
                             "kind": "polyline",
-                            "points": loop,
+                            "points": self._simplify_polyline_points(loop, closed=True),
                             "closed": True,
                             "subtype": "shx_outline_oda_boundary",
                         }
@@ -1205,13 +1480,21 @@ class DwgServiceCore:
             return None
         return {"x": x, "y": y, "z": z}
 
-    def _parse_oda_vectorize_text_primitives(self, dump_text: str) -> Dict[str, List[Dict[str, object]]]:
+    def _parse_oda_vectorize_text_primitives(self, dump_text: str) -> Tuple[Dict[str, List[Dict[str, object]]], Dict[str, object]]:
         result: Dict[str, List[Dict[str, object]]] = {}
+        parse_meta: Dict[str, object] = {
+            "vectorize_text_entity_count": 0,
+            "vectorize_text_keys_count": 0,
+            "vectorize_primitives_total": 0,
+            "shape_file_text_true_count": 0,
+            "vectorize_text_key_samples": [],
+        }
         entity_stack: List[Tuple[str, str]] = []
         block_ref_stack: List[str] = []
         text_ctx_stack: List[Dict[str, object]] = []
         capture_kind: Optional[str] = None
         capture_points: List[Dict[str, float]] = []
+        key_sample_seen: Set[str] = set()
 
         def flush_capture() -> None:
             nonlocal capture_kind, capture_points
@@ -1275,11 +1558,19 @@ class DwgServiceCore:
             shape_file = bool(ctx.get("shape_file", False))
             optimized = self._optimize_oda_text_outlines(clean)
             if shape_file:
+                parse_meta["shape_file_text_true_count"] = int(parse_meta.get("shape_file_text_true_count", 0)) + 1
                 for prim in optimized:
                     if isinstance(prim, dict):
                         prim["shape_file_text"] = True
             bucket = result.setdefault(key, [])
-            bucket.extend([p for p in optimized if isinstance(p, dict)])
+            clean_optimized = [p for p in optimized if isinstance(p, dict)]
+            bucket.extend(clean_optimized)
+            parse_meta["vectorize_primitives_total"] = int(parse_meta.get("vectorize_primitives_total", 0)) + len(clean_optimized)
+            if key not in key_sample_seen and len(key_sample_seen) < 20:
+                key_sample_seen.add(key)
+                samples = parse_meta.get("vectorize_text_key_samples")
+                if isinstance(samples, list):
+                    samples.append(key)
 
         for raw in dump_text.splitlines():
             line = raw.rstrip()
@@ -1316,6 +1607,7 @@ class DwgServiceCore:
                 if etype == "ACDBBLOCKREFERENCE":
                     block_ref_stack.append(handle)
                 if etype in ("ACDBTEXT", "ACDBMTEXT"):
+                    parse_meta["vectorize_text_entity_count"] = int(parse_meta.get("vectorize_text_entity_count", 0)) + 1
                     instance_id = handle
                     if block_ref_stack:
                         instance_id = f"{handle}@{'/'.join(block_ref_stack)}"
@@ -1346,7 +1638,8 @@ class DwgServiceCore:
         while text_ctx_stack:
             finalize_text_ctx()
 
-        return result
+        parse_meta["vectorize_text_keys_count"] = len(result)
+        return result, parse_meta
 
     def _has_shx_text_entities(self, entities_by_space: Dict[str, List[Dict[str, object]]]) -> bool:
         for entities in entities_by_space.values():
@@ -1379,13 +1672,264 @@ class DwgServiceCore:
                 return True
         return False
 
+    def _count_shx_text_fallback_entities(self, entities_by_space: Dict[str, List[Dict[str, object]]]) -> int:
+        count = 0
+        for entities in entities_by_space.values():
+            for ent in entities:
+                if str(ent.get("type", "")).upper() != "TEXT":
+                    continue
+                geom = ent.get("geom")
+                if not isinstance(geom, dict):
+                    continue
+                if str(geom.get("font_kind", "")).strip().lower() != "shx":
+                    continue
+                oda_outlines = geom.get("oda_outline_primitives")
+                if not isinstance(oda_outlines, list) or len(oda_outlines) == 0:
+                    count += 1
+        return count
+
+    @staticmethod
+    def _format_missing_font_names(names: List[str], max_items: int = 8) -> str:
+        if not names:
+            return ""
+        shown = names[:max_items]
+        if len(names) > max_items:
+            return f"{'、'.join(shown)} 等{len(names)}个"
+        return "、".join(shown)
+
+    def _collect_missing_style_fonts(self, text_styles: Dict[str, Dict[str, object]]) -> Tuple[List[str], List[str]]:
+        missing_primary: Dict[str, str] = {}
+        missing_bigfont: Dict[str, str] = {}
+
+        def mark_missing(bucket: Dict[str, str], name_raw: object) -> None:
+            name = str(name_raw or "").strip()
+            if not name:
+                return
+            if self._resolve_font_file(name) is not None:
+                return
+            key = name.lower()
+            if key not in bucket:
+                bucket[key] = name
+
+        for rec in text_styles.values():
+            if not isinstance(rec, dict):
+                continue
+            mark_missing(missing_primary, rec.get("font_name"))
+            mark_missing(missing_bigfont, rec.get("bigfont_name"))
+
+        primary_names = sorted(missing_primary.values(), key=lambda s: s.lower())
+        bigfont_names = sorted(missing_bigfont.values(), key=lambda s: s.lower())
+        return primary_names, bigfont_names
+
+    def _build_missing_font_warning(self, text_styles: Dict[str, Dict[str, object]]) -> Optional[str]:
+        primary_names, bigfont_names = self._collect_missing_style_fonts(text_styles)
+        if not primary_names and not bigfont_names:
+            return None
+
+        parts: List[str] = []
+        if primary_names:
+            parts.append(f"主字体: {self._format_missing_font_names(primary_names)}")
+        if bigfont_names:
+            parts.append(f"大字体: {self._format_missing_font_names(bigfont_names)}")
+        detail = "；".join(parts)
+        return f"以下字体文件在服务器未找到：{detail}。已按可用字体或降级策略渲染。"
+
+    def _build_shx_font_resolution_warning(
+        self,
+        text_styles: Dict[str, Dict[str, object]],
+        shx_detected: bool,
+        shx_true_outline: bool,
+    ) -> Optional[str]:
+        if not shx_detected or shx_true_outline:
+            return None
+
+        missing_items: Dict[str, str] = {}
+        found_items: Dict[str, str] = {}
+
+        def push_item(bucket: Dict[str, str], label: str) -> None:
+            key = label.lower()
+            if key not in bucket:
+                bucket[key] = label
+
+        for rec in text_styles.values():
+            if not isinstance(rec, dict):
+                continue
+            shape_file = bool(rec.get("shape_file", False))
+            font_kind = str(rec.get("font_kind", "")).strip().lower()
+            font_name = str(rec.get("font_name") or "").strip()
+            bigfont_name = str(rec.get("bigfont_name") or "").strip()
+
+            primary_is_shx = shape_file or font_kind == "shx" or _detect_font_kind(font_name) == "shx"
+            bigfont_is_shx = _detect_font_kind(bigfont_name) == "shx"
+
+            candidates: List[Tuple[str, str]] = []
+            if primary_is_shx and font_name:
+                candidates.append(("主字体", font_name))
+            if bigfont_is_shx and bigfont_name:
+                candidates.append(("大字体", bigfont_name))
+
+            for role, name in candidates:
+                resolved = self._resolve_font_file(name)
+                label = f"{role} {name}"
+                if resolved is None:
+                    push_item(missing_items, label)
+                else:
+                    push_item(found_items, label)
+
+        missing_names = sorted(missing_items.values(), key=lambda s: s.lower())
+        found_names = sorted(found_items.values(), key=lambda s: s.lower())
+
+        if missing_names:
+            fallback_exists = bool(self.shx_fallback_file.exists() and self.shx_fallback_file.is_file())
+            fallback_note = (
+                f"已尝试使用后备 SHX 字体 {self.shx_fallback_file.name}。"
+                if fallback_exists
+                else "未检测到可用后备 SHX 字体，请补齐 SHX 文件。"
+            )
+            found_note = (
+                f"已找到：{self._format_missing_font_names(found_names, max_items=6)}。"
+                if found_names
+                else ""
+            )
+            return f"以下字体文件在服务器未找到：SHX {self._format_missing_font_names(missing_names)}。{fallback_note}{found_note}"
+
+        if found_names:
+            return (
+                f"SHX 字体文件检查：未发现缺失项（{self._format_missing_font_names(found_names, max_items=6)}），"
+                "当前降级更可能由轮廓匹配失败导致。"
+            )
+
+        return "检测到 SHX 文本，但未解析出具体 SHX 字体名；当前已使用降级笔画渲染。"
+
+    @staticmethod
+    def _string_list(value: object) -> List[str]:
+        if not isinstance(value, list):
+            return []
+        out: List[str] = []
+        seen: Set[str] = set()
+        for item in value:
+            s = str(item or "").strip()
+            if not s:
+                continue
+            k = s.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(s)
+        return out
+
+    @staticmethod
+    def _font_display_name(font_record: Dict[str, object]) -> str:
+        return (
+            str(font_record.get("name") or "").strip()
+            or str(font_record.get("style_name") or "").strip()
+            or str(font_record.get("key") or "").strip()
+            or "未命名SHX"
+        )
+
+    def _build_shx_diagnostics_from_fonts(self, fonts: List[Dict[str, object]]) -> Dict[str, object]:
+        missing: Dict[str, str] = {}
+        resolved: Dict[str, str] = {}
+        fallback_file: Optional[str] = None
+        fallback_hit_count = 0
+
+        for rec in fonts:
+            kind = str(rec.get("kind") or "").strip().lower()
+            if kind != "shx":
+                continue
+            name = self._font_display_name(rec)
+            name_key = name.lower()
+            reason = str(rec.get("reason") or "").strip().lower()
+            fallback_hit = bool(rec.get("fallback_shx_hit"))
+            fallback_file_name = str(rec.get("fallback_shx_file_name") or "").strip() or None
+            available = bool(rec.get("available"))
+
+            looks_missing = fallback_hit or (not available) or ("not found" in reason) or ("未找到" in reason)
+            if looks_missing:
+                missing[name_key] = name
+                fallback_hit_count += 1 if fallback_hit else 0
+                if fallback_hit and fallback_file_name:
+                    fallback_file = fallback_file_name
+                continue
+            resolved[name_key] = name
+
+        missing_names = sorted(missing.values(), key=lambda s: s.lower())
+        resolved_names = sorted(v for k, v in resolved.items() if k not in missing)
+        if not fallback_file and fallback_hit_count > 0:
+            fallback_file = self.shx_fallback_file.name
+        return {
+            "missing_original_shx_fonts": missing_names,
+            "resolved_original_shx_fonts": resolved_names,
+            "fallback_shx_file": fallback_file,
+            "fallback_hit_count": int(fallback_hit_count),
+            "diagnostics_unavailable": False,
+        }
+
+    def _build_shx_status(self, session: DwgDocSession) -> Dict[str, object]:
+        mode = str(session.shx_outline_mode or "none").strip().lower() or "none"
+        true_outline = bool(session.shx_true_outline or (mode == "oda_vectorize" and session.shx_vectorize_attached_count > 0))
+        payload = {
+            "detected": bool(session.shx_detected),
+            "outline_mode": mode,
+            "true_outline": true_outline,
+            "vectorize_attempted": bool(session.shx_vectorize_attempted),
+            "vectorize_attached_count": int(session.shx_vectorize_attached_count),
+            "vectorize_error": session.shx_vectorize_error,
+            "fallback_text_count": int(session.shx_fallback_text_count),
+            "vectorize_available": bool(self._is_oda_vectorize_available()),
+            "missing_original_shx_fonts": list(session.shx_missing_original_fonts),
+            "resolved_original_shx_fonts": list(session.shx_resolved_original_fonts),
+            "fallback_shx_file": session.shx_fallback_file_name,
+            "fallback_hit_count": int(session.shx_fallback_hit_count),
+            "diagnostics_unavailable": bool(session.shx_diagnostics_unavailable),
+        }
+        if isinstance(session.shx_debug_match, dict):
+            payload["debug_match"] = session.shx_debug_match
+        return payload
+
     def _attach_oda_vectorized_text_primitives(
         self,
         entities_by_space: Dict[str, List[Dict[str, object]]],
         text_primitives: Dict[str, List[Dict[str, object]]],
     ) -> int:
+        attached, _ = self._attach_oda_vectorized_text_primitives_with_debug(
+            entities_by_space,
+            text_primitives,
+            enable_debug=False,
+        )
+        return attached
+
+    def _attach_oda_vectorized_text_primitives_with_debug(
+        self,
+        entities_by_space: Dict[str, List[Dict[str, object]]],
+        text_primitives: Dict[str, List[Dict[str, object]]],
+        enable_debug: bool,
+    ) -> Tuple[int, Dict[str, object]]:
+        debug: Dict[str, object] = {
+            "attach_candidate_entity_count": 0,
+            "matched_entity_count": 0,
+            "unmatched_entity_count": 0,
+            "no_vectorize_payload_count": 0,
+            "key_mismatch_count": 0,
+            "filtered_by_font_kind_count": 0,
+            "empty_after_optimize_count": 0,
+            "filtered_non_shx_count": 0,
+            "shape_file_text_true_count": 0,
+            "unmatched_key_samples": [],
+            "orphan_vectorize_key_samples": [],
+            "key_mismatch_samples": [],
+        }
         if not text_primitives:
-            return 0
+            return 0, debug
+
+        vector_keys: Set[str] = set()
+        for k in text_primitives.keys():
+            nk = _normalize_entity_instance_key(k)
+            if nk:
+                vector_keys.add(nk)
+        vector_base_handles = {k.split("@", 1)[0] for k in vector_keys}
+        matched_vector_keys: Set[str] = set()
+
         attached = 0
         for entities in entities_by_space.values():
             for ent in entities:
@@ -1395,41 +1939,94 @@ class DwgServiceCore:
                 if not isinstance(geom, dict):
                     continue
 
+                debug["attach_candidate_entity_count"] = int(debug.get("attach_candidate_entity_count", 0)) + 1
+
                 ent_id = str(ent.get("id", "")).strip()
                 base_id = ent_id.split("@", 1)[0].strip() if ent_id else ""
                 handle_raw = str(ent.get("handle", "")).strip()
                 if not handle_raw:
                     handle_raw = base_id
-
+                base_norm = _normalize_entity_instance_key(base_id)
+                handle_norm = _normalize_entity_instance_key(handle_raw)
                 candidate_keys = [
                     _normalize_entity_instance_key(ent_id),
-                    _normalize_entity_instance_key(base_id),
-                    _normalize_entity_instance_key(handle_raw),
+                    base_norm,
+                    handle_norm,
                 ]
 
+                resolved_key: Optional[str] = None
                 resolved: Optional[List[Dict[str, object]]] = None
                 for key in candidate_keys:
                     if not key:
                         continue
                     hit = text_primitives.get(key)
                     if isinstance(hit, list) and hit:
+                        resolved_key = key
                         resolved = hit
                         break
+
                 if not resolved:
+                    looks_mismatch = False
+                    if base_norm and base_norm.split("@", 1)[0] in vector_base_handles:
+                        looks_mismatch = True
+                    elif handle_norm and handle_norm.split("@", 1)[0] in vector_base_handles:
+                        looks_mismatch = True
+
+                    if looks_mismatch:
+                        debug["key_mismatch_count"] = int(debug.get("key_mismatch_count", 0)) + 1
+                        if enable_debug:
+                            samples = debug.get("key_mismatch_samples")
+                            if isinstance(samples, list) and len(samples) < 10:
+                                samples.append(
+                                    {
+                                        "entity_id": ent_id,
+                                        "handle": handle_raw,
+                                        "instance_path": ent.get("instance_path"),
+                                        "candidate_keys": [k for k in candidate_keys if k],
+                                    }
+                                )
+                    else:
+                        debug["no_vectorize_payload_count"] = int(debug.get("no_vectorize_payload_count", 0)) + 1
+
+                    if enable_debug:
+                        unmatched = debug.get("unmatched_key_samples")
+                        first_key = next((k for k in candidate_keys if k), ent_id or handle_raw)
+                        if isinstance(unmatched, list) and first_key and len(unmatched) < 20:
+                            unmatched.append(first_key)
                     continue
+
+                if resolved_key:
+                    matched_vector_keys.add(resolved_key)
                 font_kind = str(geom.get("font_kind", "")).strip().lower()
                 shape_file_text = any(bool(p.get("shape_file_text")) for p in resolved if isinstance(p, dict))
+                if shape_file_text:
+                    debug["shape_file_text_true_count"] = int(debug.get("shape_file_text_true_count", 0)) + 1
                 if font_kind != "shx" and not shape_file_text:
+                    debug["filtered_by_font_kind_count"] = int(debug.get("filtered_by_font_kind_count", 0)) + 1
+                    debug["filtered_non_shx_count"] = int(debug.get("filtered_non_shx_count", 0)) + 1
+                    continue
+
+                clean_resolved = [p for p in resolved if isinstance(p, dict)]
+                if len(clean_resolved) == 0:
+                    debug["empty_after_optimize_count"] = int(debug.get("empty_after_optimize_count", 0)) + 1
                     continue
 
                 geom_out = dict(geom)
-                geom_out["oda_outline_primitives"] = [p for p in resolved if isinstance(p, dict)]
+                geom_out["oda_outline_primitives"] = clean_resolved
                 geom_out["shx_outline_mode"] = "oda_vectorize"
                 if shape_file_text and font_kind != "shx":
                     geom_out["font_kind"] = "shx"
                 ent["geom"] = geom_out
                 attached += 1
-        return attached
+                debug["matched_entity_count"] = int(debug.get("matched_entity_count", 0)) + 1
+
+        attach_candidates = int(debug.get("attach_candidate_entity_count", 0))
+        matched_count = int(debug.get("matched_entity_count", 0))
+        debug["unmatched_entity_count"] = max(0, attach_candidates - matched_count)
+        if enable_debug:
+            orphan = [k for k in sorted(vector_keys) if k not in matched_vector_keys]
+            debug["orphan_vectorize_key_samples"] = orphan[:20]
+        return attached, debug
 
     def _build_entity_from_oda(
         self,
@@ -1437,6 +2034,8 @@ class DwgServiceCore:
         handle: str,
         lines: List[str],
         space_id: str,
+        dim_styles: Optional[Dict[str, Dict[str, object]]] = None,
+        header_dim_defaults: Optional[Dict[str, object]] = None,
     ) -> Optional[Dict[str, object]]:
         is_block_reference = etype.lower() == "acdbblockreference"
         blockref_has_position = False
@@ -1478,24 +2077,38 @@ class DwgServiceCore:
         actual_height: Optional[float] = None
         mirrored_x: Optional[bool] = None
         mirrored_y: Optional[bool] = None
+        poly_start_width: Optional[float] = None
+        poly_end_width: Optional[float] = None
+        poly_global_width: Optional[float] = None
         poly_closed_flag: Optional[bool] = None
         poly_closed_seen = False
         named_points: Dict[str, Dict[str, float]] = {}
 
         hatch_pattern_name: Optional[str] = None
         hatch_solid_fill = False
+        hatch_pattern_angle: Optional[float] = None
+        hatch_pattern_scale: Optional[float] = None
+        hatch_pattern_spacing: Optional[float] = None
         hatch_loops: List[Dict[str, object]] = []
         hatch_current_loop: Optional[Dict[str, object]] = None
         hatch_current_edge_start: Optional[Dict[str, float]] = None
+        hatch_current_edge: Optional[Dict[str, object]] = None
         dimension_line_point: Optional[Dict[str, float]] = None
         ext_line1_point: Optional[Dict[str, float]] = None
         ext_line2_point: Optional[Dict[str, float]] = None
         dimension_measurement: Optional[float] = None
         formatted_measurement: Optional[str] = None
+        dimension_style_name: Optional[str] = None
+        dimension_arrow_block: Optional[str] = None
+        dimension_arrow_block1: Optional[str] = None
+        dimension_arrow_block2: Optional[str] = None
+        dimension_arrow_size: Optional[float] = None
         text_position_point: Optional[Dict[str, float]] = None
         text_rotation_deg: Optional[float] = None
         leader_has_arrowhead = False
         leader_splined = False
+        leader_arrow_block: Optional[str] = None
+        leader_arrow_size: Optional[float] = None
 
         expect_vertex_point = False
 
@@ -1555,25 +2168,63 @@ class DwgServiceCore:
             if label == "text rotation":
                 text_rotation_deg = _parse_float_value(value)
                 continue
+            if label in ("dimension style", "dim style", "dimstyle"):
+                dimension_style_name = value.strip() or None
+                continue
+            if label == "dimblk":
+                dimension_arrow_block = _normalize_dimblk_name(value)
+                continue
+            if label == "dimblk1":
+                dimension_arrow_block1 = _normalize_dimblk_name(value)
+                continue
+            if label == "dimblk2":
+                dimension_arrow_block2 = _normalize_dimblk_name(value)
+                continue
+            if label == "dimasz":
+                dimension_arrow_size = _parse_float_value(value)
+                continue
             if label == "has arrowhead":
                 leader_has_arrowhead = value.strip().lower() == "true"
                 continue
             if label == "splined":
                 leader_splined = value.strip().lower() == "true"
                 continue
+            if label in ("arrow symbol", "arrow block", "leader arrow block", "dimldrblk"):
+                leader_arrow_block = _normalize_dimblk_name(value)
+                continue
+            if label == "arrow size":
+                leader_arrow_size = _parse_float_value(value)
+                continue
             if etype.lower() == "acdbhatch" and label.startswith("loop "):
-                hatch_current_loop = {"kind": value, "points": [], "closed": True}
+                hatch_current_loop = {"kind": value, "points": [], "edges": [], "closed": True}
                 hatch_loops.append(hatch_current_loop)
                 hatch_current_edge_start = None
+                hatch_current_edge = None
                 continue
             if etype.lower() == "acdbhatch" and label.startswith("edge "):
                 hatch_current_edge_start = None
+                hatch_current_edge = {"kind": value}
+                if isinstance(hatch_current_loop, dict):
+                    loop_edges = hatch_current_loop.get("edges")
+                    if not isinstance(loop_edges, list):
+                        loop_edges = []
+                        hatch_current_loop["edges"] = loop_edges
+                    loop_edges.append(hatch_current_edge)
                 continue
             if etype.lower() == "acdbhatch" and label == "pattern name":
                 hatch_pattern_name = value
                 continue
             if etype.lower() == "acdbhatch" and label == "solid fill":
                 hatch_solid_fill = value.strip().lower() == "true"
+                continue
+            if etype.lower() == "acdbhatch" and label == "pattern angle":
+                hatch_pattern_angle = _parse_float_value(value)
+                continue
+            if etype.lower() == "acdbhatch" and label == "pattern scale":
+                hatch_pattern_scale = _parse_float_value(value)
+                continue
+            if etype.lower() == "acdbhatch" and label in ("pattern space", "pattern spacing"):
+                hatch_pattern_spacing = _parse_float_value(value)
                 continue
             if label == "min extents":
                 min_pt = _parse_point_value(value)
@@ -1595,24 +2246,62 @@ class DwgServiceCore:
                 u_axis_pt = _parse_point_value(value)
                 continue
             if label in ("center", "center point"):
-                center_pt = _parse_point_value(value)
+                parsed_center = _parse_point_value(value)
+                if etype.lower() == "acdbhatch" and isinstance(hatch_current_edge, dict):
+                    if isinstance(parsed_center, dict):
+                        hatch_current_edge["center"] = parsed_center
+                    continue
+                center_pt = parsed_center
                 continue
             if label == "radius":
-                radius = _parse_float_value(value)
+                parsed_radius = _parse_float_value(value)
+                if etype.lower() == "acdbhatch" and isinstance(hatch_current_edge, dict):
+                    if isinstance(parsed_radius, float) and math.isfinite(parsed_radius):
+                        hatch_current_edge["radius"] = float(parsed_radius)
+                    continue
+                radius = parsed_radius
                 continue
             if label == "closed":
                 poly_closed_seen = True
                 poly_closed_flag = value.strip().lower() in ("true", "1", "yes", "ktrue")
                 continue
+            if label in ("start width", "starting width"):
+                w = _parse_float_value(value)
+                if isinstance(w, float) and math.isfinite(w) and w > 0:
+                    if poly_start_width is None or w > poly_start_width:
+                        poly_start_width = float(w)
+                continue
+            if label in ("end width", "ending width"):
+                w = _parse_float_value(value)
+                if isinstance(w, float) and math.isfinite(w) and w > 0:
+                    if poly_end_width is None or w > poly_end_width:
+                        poly_end_width = float(w)
+                continue
+            if label in ("constant width", "global width"):
+                w = _parse_float_value(value)
+                if isinstance(w, float) and math.isfinite(w) and w > 0:
+                    if poly_global_width is None or w > poly_global_width:
+                        poly_global_width = float(w)
+                continue
+            if label == "width" and etype.lower() in ("acdbpolyline", "acdb2dpolyline", "acdb3dpolyline", "acdblwpolyline"):
+                w = _parse_float_value(value)
+                if isinstance(w, float) and math.isfinite(w) and w > 0:
+                    if poly_global_width is None or w > poly_global_width:
+                        poly_global_width = float(w)
+                continue
             if label == "start point":
                 if etype.lower() == "acdbhatch":
                     hatch_current_edge_start = _parse_point_value(value)
+                    if isinstance(hatch_current_edge, dict) and isinstance(hatch_current_edge_start, dict):
+                        hatch_current_edge["start_point"] = hatch_current_edge_start
                     continue
                 start_pt = _parse_point_value(value)
                 continue
             if label == "end point":
                 if etype.lower() == "acdbhatch":
                     p_end = _parse_point_value(value)
+                    if isinstance(hatch_current_edge, dict) and isinstance(p_end, dict):
+                        hatch_current_edge["end_point"] = p_end
                     if isinstance(hatch_current_loop, dict) and isinstance(p_end, dict):
                         loop_points = hatch_current_loop.get("points")
                         if not isinstance(loop_points, list):
@@ -1631,10 +2320,24 @@ class DwgServiceCore:
                 end_pt = _parse_point_value(value)
                 continue
             if label == "start angle":
-                start_angle = _parse_float_value(value)
+                parsed_start_angle = _parse_float_value(value)
+                if etype.lower() == "acdbhatch" and isinstance(hatch_current_edge, dict):
+                    if isinstance(parsed_start_angle, float) and math.isfinite(parsed_start_angle):
+                        hatch_current_edge["start_angle"] = float(parsed_start_angle)
+                    continue
+                start_angle = parsed_start_angle
                 continue
             if label == "end angle":
-                end_angle = _parse_float_value(value)
+                parsed_end_angle = _parse_float_value(value)
+                if etype.lower() == "acdbhatch" and isinstance(hatch_current_edge, dict):
+                    if isinstance(parsed_end_angle, float) and math.isfinite(parsed_end_angle):
+                        hatch_current_edge["end_angle"] = float(parsed_end_angle)
+                    continue
+                end_angle = parsed_end_angle
+                continue
+            if etype.lower() == "acdbhatch" and label == "clockwise":
+                if isinstance(hatch_current_edge, dict):
+                    hatch_current_edge["clockwise"] = value.strip().lower() == "true"
                 continue
             if label == "name":
                 block_name = value
@@ -1734,6 +2437,9 @@ class DwgServiceCore:
         et = etype.lower()
 
         style_obj: Dict[str, object] = {"lineweight": lineweight_name or "default"}
+        lineweight_mm = _lineweight_to_mm(lineweight_name)
+        if isinstance(lineweight_mm, float) and math.isfinite(lineweight_mm) and lineweight_mm > 0:
+            style_obj["lineweight_mm"] = lineweight_mm
         if color_index is not None:
             style_obj["color_index"] = color_index
         if color_name:
@@ -1822,12 +2528,19 @@ class DwgServiceCore:
                         is_closed = True
             if bbox is None:
                 bbox = _bbox_from_points(vertices)
+            poly_geom: Dict[str, object] = {"vertices": vertices, "closed": is_closed}
+            if isinstance(poly_start_width, float) and math.isfinite(poly_start_width) and poly_start_width > 0:
+                poly_geom["start_width"] = float(poly_start_width)
+            if isinstance(poly_end_width, float) and math.isfinite(poly_end_width) and poly_end_width > 0:
+                poly_geom["end_width"] = float(poly_end_width)
+            if isinstance(poly_global_width, float) and math.isfinite(poly_global_width) and poly_global_width > 0:
+                poly_geom["global_width"] = float(poly_global_width)
             return {
                 "id": handle,
                 "type": "POLYLINE",
                 "layer": layer,
                 "space_id": space_id,
-                "geom": {"vertices": vertices, "closed": is_closed},
+                "geom": poly_geom,
                 "style": style_obj,
                 "bbox": bbox,
             }
@@ -1978,6 +2691,38 @@ class DwgServiceCore:
             text_value = _clean_oda_text_value(text_string)
             if not text_value:
                 text_value = _clean_oda_text_value(formatted_measurement)
+
+            style_key = (dimension_style_name or "").strip()
+            style_rec = (dim_styles or {}).get(style_key, {}) if style_key else {}
+            dim_defaults = header_dim_defaults or {}
+            dimblk = (
+                dimension_arrow_block
+                or _normalize_dimblk_name(style_rec.get("dimblk"))
+                or _normalize_dimblk_name(dim_defaults.get("dimblk"))
+            )
+            dimblk1 = (
+                dimension_arrow_block1
+                or _normalize_dimblk_name(style_rec.get("dimblk1"))
+                or _normalize_dimblk_name(dim_defaults.get("dimblk1"))
+            )
+            dimblk2 = (
+                dimension_arrow_block2
+                or _normalize_dimblk_name(style_rec.get("dimblk2"))
+                or _normalize_dimblk_name(dim_defaults.get("dimblk2"))
+            )
+            if not dimblk1:
+                dimblk1 = dimblk
+            if not dimblk2:
+                dimblk2 = dimblk
+            dimasz = dimension_arrow_size
+            if not isinstance(dimasz, (int, float)) or not math.isfinite(float(dimasz)) or float(dimasz) <= 0:
+                style_dimasz = style_rec.get("dimasz")
+                if isinstance(style_dimasz, (int, float)) and math.isfinite(float(style_dimasz)) and float(style_dimasz) > 0:
+                    dimasz = float(style_dimasz)
+            if not isinstance(dimasz, (int, float)) or not math.isfinite(float(dimasz)) or float(dimasz) <= 0:
+                default_dimasz = dim_defaults.get("dimasz")
+                if isinstance(default_dimasz, (int, float)) and math.isfinite(float(default_dimasz)) and float(default_dimasz) > 0:
+                    dimasz = float(default_dimasz)
             geom_dim: Dict[str, object] = {
                 "ext1": ext1,
                 "ext2": ext2,
@@ -1989,7 +2734,13 @@ class DwgServiceCore:
                 "text": text_value,
                 "text_position": text_pos if isinstance(text_pos, dict) else dict(dim_pt),
                 "dim_kind": "aligned" if et == "acdbraligneddimension" else "rotated",
+                "dimension_style": style_key or None,
+                "arrow_block": dimblk or None,
+                "arrow_block1": dimblk1 or None,
+                "arrow_block2": dimblk2 or None,
             }
+            if isinstance(dimasz, (int, float)) and math.isfinite(float(dimasz)) and float(dimasz) > 0:
+                geom_dim["arrow_size"] = float(dimasz)
             return {
                 "id": handle,
                 "type": "DIMENSION",
@@ -2018,16 +2769,39 @@ class DwgServiceCore:
                 return None
             if bbox is None:
                 bbox = _bbox_from_points(leader_points)
+            dim_defaults = header_dim_defaults or {}
+            resolved_leader_arrow_block = (
+                leader_arrow_block
+                or _normalize_dimblk_name(dim_defaults.get("dimldrblk"))
+                or _normalize_dimblk_name(dim_defaults.get("dimblk"))
+            )
+            resolved_leader_arrow_size = leader_arrow_size
+            if (
+                not isinstance(resolved_leader_arrow_size, (int, float))
+                or not math.isfinite(float(resolved_leader_arrow_size))
+                or float(resolved_leader_arrow_size) <= 0
+            ):
+                default_dimasz = dim_defaults.get("dimasz")
+                if isinstance(default_dimasz, (int, float)) and math.isfinite(float(default_dimasz)) and float(default_dimasz) > 0:
+                    resolved_leader_arrow_size = float(default_dimasz)
+            geom_leader: Dict[str, object] = {
+                "points": leader_points,
+                "has_arrowhead": bool(leader_has_arrowhead),
+                "splined": bool(leader_splined),
+                "arrow_block": resolved_leader_arrow_block,
+            }
+            if (
+                isinstance(resolved_leader_arrow_size, (int, float))
+                and math.isfinite(float(resolved_leader_arrow_size))
+                and float(resolved_leader_arrow_size) > 0
+            ):
+                geom_leader["arrow_size"] = float(resolved_leader_arrow_size)
             return {
                 "id": handle,
                 "type": "LEADER",
                 "layer": layer,
                 "space_id": space_id,
-                "geom": {
-                    "points": leader_points,
-                    "has_arrowhead": bool(leader_has_arrowhead),
-                    "splined": bool(leader_splined),
-                },
+                "geom": geom_leader,
                 "style": style_obj,
                 "bbox": bbox,
             }
@@ -2057,10 +2831,9 @@ class DwgServiceCore:
         if et == "acdbhatch":
             loops_out: List[Dict[str, object]] = []
             for lp in hatch_loops:
-                points = lp.get("points") if isinstance(lp, dict) else None
-                if not isinstance(points, list):
+                if not isinstance(lp, dict):
                     continue
-                clean_points = [p for p in points if isinstance(p, dict)]
+                clean_points = _build_hatch_loop_points_from_edges(lp)
                 if len(clean_points) < 2:
                     continue
                 if _point_distance(clean_points[0], clean_points[-1]) > 1e-6:
@@ -2104,6 +2877,9 @@ class DwgServiceCore:
                     "loops": loops_out,
                     "solid_fill": bool(hatch_solid_fill),
                     "pattern_name": hatch_pattern_name or "SOLID",
+                    "pattern_angle": hatch_pattern_angle,
+                    "pattern_scale": hatch_pattern_scale,
+                    "pattern_spacing": hatch_pattern_spacing,
                 },
                 "style": style_obj,
                 "bbox": bbox,
@@ -2304,20 +3080,27 @@ class DwgServiceCore:
         current_name: Optional[str] = None
         current_color_index: Optional[int] = None
         current_color_name: Optional[str] = None
+        current_lineweight_raw: Optional[str] = None
         in_record = False
 
         def finalize_record() -> None:
-            nonlocal current_name, current_color_index, current_color_name
+            nonlocal current_name, current_color_index, current_color_name, current_lineweight_raw
             if current_name:
                 obj: Dict[str, object] = {}
                 if current_color_index is not None:
                     obj["color_index"] = current_color_index
                 if current_color_name:
                     obj["color"] = current_color_name
+                if current_lineweight_raw:
+                    obj["lineweight"] = current_lineweight_raw
+                lineweight_mm = _lineweight_to_mm(current_lineweight_raw)
+                if isinstance(lineweight_mm, float) and math.isfinite(lineweight_mm) and lineweight_mm > 0:
+                    obj["lineweight_mm"] = lineweight_mm
                 layer_styles[current_name] = obj
             current_name = None
             current_color_index = None
             current_color_name = None
+            current_lineweight_raw = None
 
         for raw in dump_text.splitlines():
             stripped = raw.strip()
@@ -2349,6 +3132,9 @@ class DwgServiceCore:
                 continue
             if label == "color":
                 current_color_name = value
+                continue
+            if label == "lineweight":
+                current_lineweight_raw = value
                 continue
 
         if in_record:
@@ -2438,6 +3224,108 @@ class DwgServiceCore:
             finalize_record()
         return text_styles
 
+    def _extract_header_dim_defaults(self, dump_text: str) -> Dict[str, object]:
+        defaults: Dict[str, object] = {}
+        for raw in dump_text.splitlines():
+            stripped = raw.strip()
+            if stripped.startswith("<AcDb"):
+                break
+            label, value = _parse_label_value(raw)
+            if not label or value is None:
+                continue
+            if label in ("dimblk", "dimblk1", "dimblk2", "dimldrblk"):
+                v = _normalize_dimblk_name(value)
+                if v:
+                    defaults[label] = v
+                continue
+            if label in ("dimasz", "dimtsz"):
+                n = _parse_float_value(value)
+                if isinstance(n, float) and math.isfinite(n) and n > 0:
+                    defaults[label] = float(n)
+                continue
+        return defaults
+
+    def _extract_dim_styles(self, dump_text: str) -> Dict[str, Dict[str, object]]:
+        styles: Dict[str, Dict[str, object]] = {}
+        current_name: Optional[str] = None
+        current_dimblk: Optional[str] = None
+        current_dimblk1: Optional[str] = None
+        current_dimblk2: Optional[str] = None
+        current_dimldrblk: Optional[str] = None
+        current_dimasz: Optional[float] = None
+        current_dimtsz: Optional[float] = None
+        in_record = False
+
+        def finalize_record() -> None:
+            nonlocal current_name, current_dimblk, current_dimblk1, current_dimblk2, current_dimldrblk, current_dimasz, current_dimtsz
+            if current_name:
+                rec: Dict[str, object] = {}
+                if current_dimblk:
+                    rec["dimblk"] = current_dimblk
+                if current_dimblk1:
+                    rec["dimblk1"] = current_dimblk1
+                if current_dimblk2:
+                    rec["dimblk2"] = current_dimblk2
+                if current_dimldrblk:
+                    rec["dimldrblk"] = current_dimldrblk
+                if isinstance(current_dimasz, float) and math.isfinite(current_dimasz) and current_dimasz > 0:
+                    rec["dimasz"] = current_dimasz
+                if isinstance(current_dimtsz, float) and math.isfinite(current_dimtsz) and current_dimtsz > 0:
+                    rec["dimtsz"] = current_dimtsz
+                styles[current_name] = rec
+            current_name = None
+            current_dimblk = None
+            current_dimblk1 = None
+            current_dimblk2 = None
+            current_dimldrblk = None
+            current_dimasz = None
+            current_dimtsz = None
+
+        for raw in dump_text.splitlines():
+            stripped = raw.strip()
+            if stripped == "<AcDbDimStyleTableRecord>":
+                if in_record:
+                    finalize_record()
+                in_record = True
+                continue
+
+            if in_record and stripped.startswith("<AcDb") and stripped != "<AcDbDimStyleTableRecord>":
+                finalize_record()
+                in_record = False
+                continue
+
+            if not in_record:
+                continue
+
+            label, value = _parse_label_value(raw)
+            if not label or value is None:
+                continue
+            if label == "name" and current_name is None:
+                current_name = value
+                continue
+            if label == "dimblk":
+                current_dimblk = _normalize_dimblk_name(value)
+                continue
+            if label == "dimblk1":
+                current_dimblk1 = _normalize_dimblk_name(value)
+                continue
+            if label == "dimblk2":
+                current_dimblk2 = _normalize_dimblk_name(value)
+                continue
+            if label == "dimldrblk":
+                current_dimldrblk = _normalize_dimblk_name(value)
+                continue
+            if label == "dimasz":
+                current_dimasz = _parse_float_value(value)
+                continue
+            if label == "dimtsz":
+                current_dimtsz = _parse_float_value(value)
+                continue
+
+        if in_record:
+            finalize_record()
+        return styles
+
     def _attach_text_font_meta(self, ent: Dict[str, object], text_styles: Dict[str, Dict[str, object]]) -> Dict[str, object]:
         if str(ent.get("type", "")).upper() != "TEXT":
             return ent
@@ -2484,12 +3372,28 @@ class DwgServiceCore:
             return parsed
         return 7
 
+    def _layer_default_lineweight_mm(
+        self,
+        layer_name: str,
+        layer_styles: Dict[str, Dict[str, object]],
+    ) -> float:
+        style = layer_styles.get(layer_name, {})
+        raw_mm = style.get("lineweight_mm")
+        if isinstance(raw_mm, (int, float)) and math.isfinite(float(raw_mm)) and float(raw_mm) > 0:
+            return float(raw_mm)
+        raw = style.get("lineweight")
+        lw_mm = _lineweight_to_mm(raw)
+        if isinstance(lw_mm, float) and math.isfinite(lw_mm) and lw_mm > 0:
+            return lw_mm
+        return self.default_lineweight_mm
+
     def _resolve_effective_style(
         self,
         style_obj: Dict[str, object],
         layer_name: str,
         layer_styles: Dict[str, Dict[str, object]],
         parent_effective_color_index: Optional[int],
+        parent_effective_lineweight_mm: Optional[float],
     ) -> Dict[str, object]:
         out = dict(style_obj)
         local_idx: Optional[int] = None
@@ -2519,6 +3423,33 @@ class DwgServiceCore:
         out["effective_color_index"] = effective_idx
         out["effective_color"] = f"ACI {effective_idx}"
         out["effective_color_source"] = source
+
+        raw_lw = str(out.get("lineweight", "") or "").strip()
+        lw_token = raw_lw.lower()
+        explicit_lw_mm = _lineweight_to_mm(raw_lw)
+        lw_source = "entity"
+        if lw_token in ("", "default", "klnwtbylwdefault"):
+            effective_lw_mm = self.default_lineweight_mm
+            lw_source = "default"
+        elif lw_token in ("bylayer", "klnwtbylayer"):
+            effective_lw_mm = self._layer_default_lineweight_mm(layer_name, layer_styles)
+            lw_source = "bylayer"
+        elif lw_token in ("byblock", "klnwtbyblock"):
+            if isinstance(parent_effective_lineweight_mm, (int, float)) and math.isfinite(float(parent_effective_lineweight_mm)) and float(parent_effective_lineweight_mm) > 0:
+                effective_lw_mm = float(parent_effective_lineweight_mm)
+                lw_source = "byblock(parent)"
+            else:
+                effective_lw_mm = self._layer_default_lineweight_mm(layer_name, layer_styles)
+                lw_source = "byblock(layer-fallback)"
+        elif isinstance(explicit_lw_mm, float) and math.isfinite(explicit_lw_mm) and explicit_lw_mm > 0:
+            effective_lw_mm = explicit_lw_mm
+            lw_source = "entity"
+        else:
+            effective_lw_mm = self.default_lineweight_mm
+            lw_source = "default"
+
+        out["effective_lineweight_mm"] = float(effective_lw_mm)
+        out["effective_lineweight_source"] = lw_source
         return out
 
     def _transform_entity(self, ent: Dict[str, object], tf: Affine2D) -> Optional[Dict[str, object]]:
@@ -2553,7 +3484,19 @@ class DwgServiceCore:
             vertices = [_apply_affine(tf, v) for v in vertices_raw if isinstance(v, dict)]
             if len(vertices) < 2:
                 return None
-            transformed["geom"] = {"vertices": vertices, "closed": bool(geom.get("closed", False))}
+            transformed_geom: Dict[str, object] = {"vertices": vertices, "closed": bool(geom.get("closed", False))}
+            sx, sy = _affine_scales(tf)
+            scale_avg = max(1e-9, (abs(sx) + abs(sy)) * 0.5)
+            start_w = geom.get("start_width")
+            end_w = geom.get("end_width")
+            global_w = geom.get("global_width")
+            if isinstance(start_w, (int, float)) and math.isfinite(float(start_w)) and float(start_w) > 0:
+                transformed_geom["start_width"] = float(start_w) * scale_avg
+            if isinstance(end_w, (int, float)) and math.isfinite(float(end_w)) and float(end_w) > 0:
+                transformed_geom["end_width"] = float(end_w) * scale_avg
+            if isinstance(global_w, (int, float)) and math.isfinite(float(global_w)) and float(global_w) > 0:
+                transformed_geom["global_width"] = float(global_w) * scale_avg
+            transformed["geom"] = transformed_geom
             transformed["bbox"] = _bbox_from_points(vertices)
             return transformed
 
@@ -2716,6 +3659,9 @@ class DwgServiceCore:
                 "loops": loops,
                 "solid_fill": bool(geom.get("solid_fill", False)),
                 "pattern_name": geom.get("pattern_name", "SOLID"),
+                "pattern_angle": geom.get("pattern_angle"),
+                "pattern_scale": geom.get("pattern_scale"),
+                "pattern_spacing": geom.get("pattern_spacing"),
             }
             transformed["bbox"] = _bbox_from_points(all_points)
             return transformed
@@ -2762,6 +3708,11 @@ class DwgServiceCore:
                 "measurement": measurement,
                 "rotation": local_rot + tf_rot,
                 "dim_kind": geom.get("dim_kind", "aligned"),
+                "dimension_style": geom.get("dimension_style"),
+                "arrow_block": geom.get("arrow_block"),
+                "arrow_block1": geom.get("arrow_block1"),
+                "arrow_block2": geom.get("arrow_block2"),
+                "arrow_size": geom.get("arrow_size"),
             }
             transformed["bbox"] = _apply_bbox_affine(tf, ent.get("bbox"))
             if transformed["bbox"] is None:
@@ -2779,6 +3730,8 @@ class DwgServiceCore:
                 "points": points,
                 "has_arrowhead": bool(geom.get("has_arrowhead", False)),
                 "splined": bool(geom.get("splined", False)),
+                "arrow_block": geom.get("arrow_block"),
+                "arrow_size": geom.get("arrow_size"),
             }
             transformed["bbox"] = _bbox_from_points(points)
             return transformed
@@ -2868,6 +3821,8 @@ class DwgServiceCore:
         warnings: List[str] = []
         layer_styles = self._extract_layer_styles(dump_text)
         text_styles = self._extract_text_styles(dump_text)
+        dim_styles = self._extract_dim_styles(dump_text)
+        header_dim_defaults = self._extract_header_dim_defaults(dump_text)
 
         current_block_name: Optional[str] = None
         current_block_layout = False
@@ -2896,6 +3851,8 @@ class DwgServiceCore:
                 handle=str(current_entity["handle"]),
                 lines=list(current_entity["lines"]),
                 space_id="block",
+                dim_styles=dim_styles,
+                header_dim_defaults=header_dim_defaults,
             )
             if ent is not None:
                 current_block_entities.append(self._attach_text_font_meta(ent, text_styles))
@@ -3070,6 +4027,7 @@ class DwgServiceCore:
             stack: Tuple[str, ...],
             instance_path: Tuple[str, ...],
             parent_effective_color_index: Optional[int],
+            parent_effective_lineweight_mm: Optional[float],
         ) -> None:
             if len(stack) > max_expand_depth:
                 warnings.append(
@@ -3088,10 +4046,18 @@ class DwgServiceCore:
                     layer_name=raw_layer,
                     layer_styles=layer_styles,
                     parent_effective_color_index=parent_effective_color_index,
+                    parent_effective_lineweight_mm=parent_effective_lineweight_mm,
                 )
                 next_parent_color_idx = effective_style.get("effective_color_index")
                 if not isinstance(next_parent_color_idx, int):
                     next_parent_color_idx = None
+                next_parent_lineweight_mm = effective_style.get("effective_lineweight_mm")
+                if not isinstance(next_parent_lineweight_mm, (int, float)) or not math.isfinite(float(next_parent_lineweight_mm)):
+                    next_parent_lineweight_mm = None
+                elif float(next_parent_lineweight_mm) <= 0:
+                    next_parent_lineweight_mm = None
+                else:
+                    next_parent_lineweight_mm = float(next_parent_lineweight_mm)
 
                 if etype == "INSERT":
                     geom = raw_ent.get("geom", {}) if isinstance(raw_ent.get("geom"), dict) else {}
@@ -3140,6 +4106,7 @@ class DwgServiceCore:
                         stack + (child_name,),
                         path_with_self,
                         next_parent_color_idx,
+                        next_parent_lineweight_mm,
                     )
                     continue
 
@@ -3164,7 +4131,7 @@ class DwgServiceCore:
                 -float(root_origin.get("x", 0.0)),
                 -float(root_origin.get("y", 0.0)),
             )
-            expand_block_into_space(sid, block_name, root_tf, (block_name,), (), None)
+            expand_block_into_space(sid, block_name, root_tf, (block_name,), (), None, None)
 
         if not spaces_by_id:
             spaces_by_id["model"] = {"id": "model", "display_name": "Model", "kind": "model"}
@@ -3303,6 +4270,7 @@ class DwgServiceCore:
                 "fonts": True,
                 "shx_outline": self.enable_shx_outline,
                 "shx_outline_oda": self._is_oda_vectorize_available(),
+                "shx_debug_match": self.enable_shx_debug_match,
             },
             "fonts": {
                 "font_dir": str(self.font_dir),
@@ -3315,9 +4283,11 @@ class DwgServiceCore:
                 "shx_outline_enabled": self.enable_shx_outline,
                 "shx_outline_oda_enabled": self.enable_shx_outline_oda,
                 "force_text_vectorize": self.force_text_vectorize,
+                "shx_debug_match_enabled": self.enable_shx_debug_match,
                 "vectorize_cache_capacity": self.vectorize_cache_capacity,
                 "vectorize_cache_size": len(self._vectorize_text_cache),
                 "oda_vectorize_exe": self.oda_vectorize_exe,
+                "oda_vectorize_exe_exists": bool(self._is_oda_vectorize_available()),
                 "oda_vectorize_resolve_source": self.oda_vectorize_resolve_source,
             },
         }
@@ -3405,6 +4375,18 @@ class DwgServiceCore:
             warnings_raw = opened.get("warnings")
             warnings = warnings_raw if isinstance(warnings_raw, list) else []
             mode = str(opened.get("mode") or "external_http")
+            remote_shx_status = opened.get("shx_status") if isinstance(opened.get("shx_status"), dict) else {}
+            outline_mode = str(
+                remote_shx_status.get("outline_mode")
+                or opened.get("shx_outline_mode")
+                or "none"
+            ).strip().lower() or "none"
+
+            def _to_int(value: object, default: int = 0) -> int:
+                try:
+                    return int(value)  # type: ignore[arg-type]
+                except Exception:
+                    return default
 
             session = DwgDocSession(
                 doc_id=doc_id,
@@ -3418,6 +4400,25 @@ class DwgServiceCore:
                 current_space=current_space,
                 remote_doc_id=remote_doc_id,
             )
+            session.shx_outline_mode = outline_mode
+            session.shx_detected = bool(remote_shx_status.get("detected"))
+            session.shx_true_outline = bool(remote_shx_status.get("true_outline"))
+            session.shx_vectorize_attempted = bool(remote_shx_status.get("vectorize_attempted"))
+            session.shx_vectorize_attached_count = _to_int(remote_shx_status.get("vectorize_attached_count"), 0)
+            vectorize_error = remote_shx_status.get("vectorize_error")
+            session.shx_vectorize_error = str(vectorize_error).strip() if vectorize_error else None
+            session.shx_fallback_text_count = _to_int(remote_shx_status.get("fallback_text_count"), 0)
+            session.shx_missing_original_fonts = self._string_list(remote_shx_status.get("missing_original_shx_fonts"))
+            session.shx_resolved_original_fonts = self._string_list(remote_shx_status.get("resolved_original_shx_fonts"))
+            fallback_name_raw = remote_shx_status.get("fallback_shx_file")
+            session.shx_fallback_file_name = str(fallback_name_raw or "").strip() or None
+            session.shx_fallback_hit_count = _to_int(remote_shx_status.get("fallback_hit_count"), 0)
+            session.shx_diagnostics_unavailable = bool(remote_shx_status.get("diagnostics_unavailable"))
+            session.shx_debug_match = (
+                remote_shx_status.get("debug_match")
+                if isinstance(remote_shx_status.get("debug_match"), dict)
+                else None
+            )
             session.view_state["remote_doc_id"] = remote_doc_id
             self.sessions[doc_id] = session
 
@@ -3428,6 +4429,7 @@ class DwgServiceCore:
                 "spaces": spaces,
                 "current_space": current_space,
                 "warnings": warnings,
+                "shx_status": self._build_shx_status(session),
             }
 
         if self.mode == "oda_cli":
@@ -3441,45 +4443,89 @@ class DwgServiceCore:
             has_text = self._has_text_entities(entities_by_space)
             has_shx_text = self._has_shx_text_entities(entities_by_space)
             has_shx_style_hints = self._has_shx_style_hints(text_styles)
+            shx_detected = has_shx_text or has_shx_style_hints
+            shx_vectorize_attempted = False
+            shx_vectorize_attached_count = 0
+            shx_vectorize_error: Optional[str] = None
+            shx_debug_match: Optional[Dict[str, object]] = None
             should_try_vectorize = (
                 has_text
                 and self.enable_shx_outline
                 and self._is_oda_vectorize_available()
-                and (self.force_text_vectorize or has_shx_text or has_shx_style_hints)
             )
             if should_try_vectorize:
+                shx_vectorize_attempted = True
                 try:
                     cache_key = self._vectorize_cache_key(file_path)
                     vector_text_primitives = self._vectorize_cache_get(cache_key)
+                    parse_meta: Dict[str, object]
+                    cache_hit = vector_text_primitives is not None
                     if vector_text_primitives is None:
                         vector_dump = self._run_oda_vectorize_dump(file_path)
-                        vector_text_primitives = self._parse_oda_vectorize_text_primitives(vector_dump)
+                        vector_text_primitives, parse_meta = self._parse_oda_vectorize_text_primitives(vector_dump)
                         self._vectorize_cache_put(cache_key, vector_text_primitives)
-                    attached_count = self._attach_oda_vectorized_text_primitives(entities_by_space, vector_text_primitives)
+                    else:
+                        parse_meta = self._build_vectorize_parse_meta_from_primitives(vector_text_primitives)
+
+                    attached_count, attach_debug = self._attach_oda_vectorized_text_primitives_with_debug(
+                        entities_by_space,
+                        vector_text_primitives,
+                        enable_debug=self.enable_shx_debug_match,
+                    )
+                    shx_vectorize_attached_count = attached_count
+                    if self.enable_shx_debug_match:
+                        shx_debug_match = {
+                            **parse_meta,
+                            **attach_debug,
+                            "vectorize_cache_hit": cache_hit,
+                            "vectorize_text_keys_count": len(vector_text_primitives),
+                        }
                     if attached_count > 0:
                         shx_outline_mode = "oda_vectorize"
-                    elif has_shx_text or has_shx_style_hints:
+                    elif shx_detected:
                         shx_outline_mode = "stub"
                         warnings.append(
-                            "SHX ODA outline extraction produced no matched text entities; fallback to stroke emulation."
+                            "SHX 轮廓提取未匹配到可替换文字实体，已回退为笔画模拟渲染。"
                         )
                 except ExternalCoreError as exc:
-                    if has_shx_text or has_shx_style_hints:
+                    shx_vectorize_error = str(exc)
+                    if self.enable_shx_debug_match:
+                        shx_debug_match = {
+                            "vectorize_error": str(exc),
+                            "vectorize_cache_hit": False,
+                            "attach_candidate_entity_count": 0,
+                            "matched_entity_count": 0,
+                            "unmatched_entity_count": 0,
+                        }
+                    if shx_detected:
                         shx_outline_mode = "stub"
                         warnings.append(
-                            f"SHX ODA outline extraction failed ({exc}); fallback to stroke emulation."
+                            f"SHX 轮廓提取失败（{exc}），已回退为笔画模拟渲染。"
                         )
-            elif (has_shx_text or has_shx_style_hints) and self.enable_shx_outline:
+            elif shx_detected and self.enable_shx_outline:
                 shx_outline_mode = "stub"
                 warnings.append(
-                    "OdVectorizeEx not configured/found; SHX uses stroke outline emulation."
+                    "未配置或未找到 OdVectorizeEx，SHX 将使用笔画模拟渲染。"
                 )
-            elif has_shx_text or has_shx_style_hints:
+            elif shx_detected:
                 shx_outline_mode = "disabled"
+
+            shx_true_outline = shx_outline_mode == "oda_vectorize" and shx_vectorize_attached_count > 0
+            shx_fallback_text_count = self._count_shx_text_fallback_entities(entities_by_space) if shx_detected else 0
+            shx_font_resolution_warning = self._build_shx_font_resolution_warning(
+                text_styles=text_styles,
+                shx_detected=shx_detected,
+                shx_true_outline=shx_true_outline,
+            )
+            if shx_font_resolution_warning:
+                warnings.append(shx_font_resolution_warning)
+            missing_font_warning = self._build_missing_font_warning(text_styles)
+            if missing_font_warning:
+                warnings.append(missing_font_warning)
 
             total_entities = sum(len(v) for v in entities_by_space.values())
             if total_entities == 0:
-                warnings.append("ODA parser loaded the DWG but did not extract supported entities yet.")
+                warnings.append("ODA 已加载 DWG，但尚未提取到可显示的受支持图元。")
 
             doc_id = str(uuid.uuid4())
             session = DwgDocSession(
@@ -3493,8 +4539,35 @@ class DwgServiceCore:
                 text_styles=text_styles,
                 warnings=warnings,
                 shx_outline_mode=shx_outline_mode,
+                shx_detected=shx_detected,
+                shx_true_outline=shx_true_outline,
+                shx_vectorize_attempted=shx_vectorize_attempted,
+                shx_vectorize_attached_count=shx_vectorize_attached_count,
+                shx_vectorize_error=shx_vectorize_error,
+                shx_fallback_text_count=shx_fallback_text_count,
+                shx_debug_match=shx_debug_match if self.enable_shx_debug_match else None,
                 current_space=current_space,
             )
+            fonts_preview = self._collect_session_fonts(session)
+            shx_diag = self._build_shx_diagnostics_from_fonts(fonts_preview)
+            session.shx_missing_original_fonts = self._string_list(shx_diag.get("missing_original_shx_fonts"))
+            session.shx_resolved_original_fonts = self._string_list(shx_diag.get("resolved_original_shx_fonts"))
+            fallback_file = str(shx_diag.get("fallback_shx_file") or "").strip() or None
+            session.shx_fallback_file_name = fallback_file
+            session.shx_fallback_hit_count = int(shx_diag.get("fallback_hit_count") or 0)
+            session.shx_diagnostics_unavailable = bool(shx_diag.get("diagnostics_unavailable"))
+
+            if session.shx_missing_original_fonts:
+                missing_text = self._format_missing_font_names(session.shx_missing_original_fonts)
+                fallback_note = f"，已使用后备字体 {session.shx_fallback_file_name}" if session.shx_fallback_file_name else ""
+                warning_text = f"未命中原始 SHX 字体：{missing_text}{fallback_note}。"
+                if warning_text not in warnings:
+                    warnings.append(warning_text)
+            elif session.shx_detected and not session.shx_true_outline and session.shx_resolved_original_fonts:
+                warning_text = "原始 SHX 字体已命中，当前降级更可能由轮廓匹配失败导致。"
+                if warning_text not in warnings:
+                    warnings.append(warning_text)
+
             session.view_state["entity_count"] = total_entities
             self.sessions[doc_id] = session
             return {
@@ -3505,6 +4578,7 @@ class DwgServiceCore:
                 "current_space": current_space,
                 "shx_outline_mode": shx_outline_mode,
                 "warnings": warnings,
+                "shx_status": self._build_shx_status(session),
             }
 
         doc_id = str(uuid.uuid4())
@@ -3534,6 +4608,7 @@ class DwgServiceCore:
             "spaces": spaces,
             "current_space": session.current_space,
             "warnings": warnings,
+            "shx_status": self._build_shx_status(session),
         }
 
     def get_session(self, doc_id: str) -> Optional[DwgDocSession]:
@@ -3858,23 +4933,37 @@ class DwgServiceCore:
                 return {"doc_id": doc_id, "fonts": [], "count": 0, "warnings": ["Remote DWG core did not expose /fonts endpoint."]}
 
         fonts = self._collect_session_fonts(session)
+        shx_diagnostics = self._build_shx_diagnostics_from_fonts(fonts)
+        session.shx_missing_original_fonts = self._string_list(shx_diagnostics.get("missing_original_shx_fonts"))
+        session.shx_resolved_original_fonts = self._string_list(shx_diagnostics.get("resolved_original_shx_fonts"))
+        session.shx_fallback_file_name = str(shx_diagnostics.get("fallback_shx_file") or "").strip() or None
+        session.shx_fallback_hit_count = int(shx_diagnostics.get("fallback_hit_count") or 0)
+        session.shx_diagnostics_unavailable = bool(shx_diagnostics.get("diagnostics_unavailable"))
+
         warnings: List[str] = []
         if any(str(f.get("kind")) == "shx" for f in fonts):
             if self.enable_shx_outline:
                 if str(session.shx_outline_mode).strip().lower() == "oda_vectorize":
-                    warnings.append("SHX fonts are rendered with ODA vectorized glyph outlines.")
+                    warnings.append("SHX 字体当前由 ODA 真实轮廓渲染。")
                 else:
-                    warnings.append("SHX fonts are rendered with server-side outline emulation.")
+                    warnings.append("SHX 字体当前由服务端笔画模拟渲染。")
             else:
-                warnings.append("SHX fonts are currently rendered with fallback font in frontend.")
-        if int(session.shx_fallback_hit_count) > 0:
-            warnings.append(f"Fallback SHX applied to {int(session.shx_fallback_hit_count)} font entries: {self.shx_fallback_file.name}.")
+                warnings.append("SHX 字体当前由前端降级字体渲染。")
+
+        if session.shx_missing_original_fonts:
+            missing_text = self._format_missing_font_names(session.shx_missing_original_fonts)
+            fallback_note = f"已使用后备字体 {session.shx_fallback_file_name}。" if session.shx_fallback_file_name else "未检测到后备 SHX 字体。"
+            warnings.append(f"未命中原始 SHX 字体：{missing_text}。{fallback_note}")
+        elif bool(session.shx_detected) and not bool(session.shx_true_outline) and session.shx_resolved_original_fonts:
+            warnings.append("原始 SHX 字体均已命中，当前降级更可能由轮廓匹配失败导致。")
+
         return {
             "doc_id": doc_id,
             "fonts": fonts,
             "count": len(fonts),
             "warnings": warnings,
             "shx_outline_mode": session.shx_outline_mode,
+            "shx_diagnostics": shx_diagnostics,
             "shx_fallback_file": str(self.shx_fallback_file),
             "shx_fallback_exists": bool(self.shx_fallback_file.exists() and self.shx_fallback_file.is_file()),
             "shx_fallback_hit_count": int(session.shx_fallback_hit_count),
@@ -4056,7 +5145,18 @@ class DwgServiceCore:
             if isinstance(points, list):
                 clean = [p for p in points if isinstance(p, dict)]
                 if len(clean) >= 2:
-                    out.append({"kind": "polyline", "points": clean, "closed": bool(geom.get("closed", False))})
+                    poly_obj: Dict[str, object] = {"kind": "polyline", "points": clean, "closed": bool(geom.get("closed", False))}
+                    if et == "POLYLINE":
+                        start_w = geom.get("start_width")
+                        end_w = geom.get("end_width")
+                        global_w = geom.get("global_width")
+                        if isinstance(start_w, (int, float)) and math.isfinite(float(start_w)) and float(start_w) > 0:
+                            poly_obj["start_width"] = float(start_w)
+                        if isinstance(end_w, (int, float)) and math.isfinite(float(end_w)) and float(end_w) > 0:
+                            poly_obj["end_width"] = float(end_w)
+                        if isinstance(global_w, (int, float)) and math.isfinite(float(global_w)) and float(global_w) > 0:
+                            poly_obj["global_width"] = float(global_w)
+                    out.append(poly_obj)
             return out
 
         if et == "CIRCLE":
@@ -4166,6 +5266,9 @@ class DwgServiceCore:
                             "rings": rings,
                             "filled": bool(geom.get("solid_fill", False)),
                             "pattern_name": geom.get("pattern_name", "SOLID"),
+                            "pattern_angle": geom.get("pattern_angle"),
+                            "pattern_scale": geom.get("pattern_scale"),
+                            "pattern_spacing": geom.get("pattern_spacing"),
                         }
                     )
                     for ring in rings:
@@ -4184,11 +5287,14 @@ class DwgServiceCore:
             if isinstance(line_start, dict) and isinstance(line_end, dict):
                 seg_dx = float(line_end["x"]) - float(line_start["x"])
                 seg_dy = float(line_end["y"]) - float(line_start["y"])
-                dim_len = math.hypot(seg_dx, seg_dy)
                 line_head = dict(line_start)
                 line_tail = dict(line_end)
                 dim_len = _point_distance(line_start, line_end)
-                arrow_len = max(8.0, min(120.0, dim_len * 0.03))
+                arrow_size_raw = geom.get("arrow_size")
+                if isinstance(arrow_size_raw, (int, float)) and math.isfinite(float(arrow_size_raw)) and float(arrow_size_raw) > 0:
+                    arrow_len = max(3.0, min(160.0, float(arrow_size_raw)))
+                else:
+                    arrow_len = max(8.0, min(120.0, dim_len * 0.03))
                 arrow_half = arrow_len * 0.55
                 if dim_len > arrow_len * 2.4:
                     ux = seg_dx / max(dim_len, 1e-9)
@@ -4207,30 +5313,80 @@ class DwgServiceCore:
                 out.append({"kind": "line", "start": line_head, "end": line_tail})
                 in1 = (float(line_end["x"]) - float(line_start["x"]), float(line_end["y"]) - float(line_start["y"]))
                 in2 = (float(line_start["x"]) - float(line_end["x"]), float(line_start["y"]) - float(line_end["y"]))
-                tri1 = _arrow_marker_triangle_points(line_start, in1, arrow_len, arrow_half)
-                tri2 = _arrow_marker_triangle_points(line_end, in2, arrow_len, arrow_half)
-                if tri1:
-                    out.append(
-                        {
-                            "kind": "polygon",
-                            "rings": [tri1],
-                            "filled": True,
-                            "pattern_name": "ARROW",
-                            "arrow_fill": True,
-                            "subtype": "dim_arrow_fill",
-                        }
-                    )
-                if tri2:
-                    out.append(
-                        {
-                            "kind": "polygon",
-                            "rings": [tri2],
-                            "filled": True,
-                            "pattern_name": "ARROW",
-                            "arrow_fill": True,
-                            "subtype": "dim_arrow_fill",
-                        }
-                    )
+                arrow_block = geom.get("arrow_block")
+                start_block = geom.get("arrow_block1") or arrow_block
+                end_block = geom.get("arrow_block2") or arrow_block
+                start_style = _normalize_arrow_style_name(start_block)
+                end_style = _normalize_arrow_style_name(end_block)
+                for tip, inward, style_name, style_block in (
+                    (line_start, in1, start_style, start_block),
+                    (line_end, in2, end_style, end_block),
+                ):
+                    if style_name == "archtick":
+                        tick_seg = _arrow_marker_archtick_segment(tip, inward, max(arrow_len, 4.0))
+                        if tick_seg:
+                            out.append(
+                                {
+                                    "kind": "line",
+                                    "start": tick_seg[0],
+                                    "end": tick_seg[1],
+                                    "subtype": "dim_arrow_tick",
+                                    "arrow_style": style_name,
+                                    "arrow_block": style_block,
+                                }
+                            )
+                        continue
+                    if style_name == "open":
+                        open_lines = _arrow_marker_lines(tip, inward, arrow_len, arrow_half)
+                        for line_a, line_b in open_lines:
+                            out.append(
+                                {
+                                    "kind": "line",
+                                    "start": line_a,
+                                    "end": line_b,
+                                    "subtype": "dim_arrow_open",
+                                    "arrow_style": style_name,
+                                    "arrow_block": style_block,
+                                }
+                            )
+                        continue
+                    if style_name == "dot":
+                        dot_radius = max(1.2, min(arrow_len * 0.32, arrow_len))
+                        dot_pts: List[Dict[str, float]] = []
+                        steps = 14
+                        tx = float(tip.get("x", 0.0))
+                        ty = float(tip.get("y", 0.0))
+                        tz = float(tip.get("z", 0.0))
+                        for i in range(steps + 1):
+                            a = math.pi * 2 * (i / steps)
+                            dot_pts.append({"x": tx + dot_radius * math.cos(a), "y": ty + dot_radius * math.sin(a), "z": tz})
+                        out.append(
+                            {
+                                "kind": "polygon",
+                                "rings": [dot_pts],
+                                "filled": True,
+                                "pattern_name": "ARROW",
+                                "arrow_fill": True,
+                                "subtype": "dim_arrow_dot",
+                                "arrow_style": style_name,
+                                "arrow_block": style_block,
+                            }
+                        )
+                        continue
+                    tri = _arrow_marker_triangle_points(tip, inward, arrow_len, arrow_half)
+                    if tri:
+                        out.append(
+                            {
+                                "kind": "polygon",
+                                "rings": [tri],
+                                "filled": True,
+                                "pattern_name": "ARROW",
+                                "arrow_fill": True,
+                                "subtype": "dim_arrow_fill",
+                                "arrow_style": style_name,
+                                "arrow_block": style_block,
+                            }
+                        )
             text = str(geom.get("text", "")).strip()
             text_pos = geom.get("text_position")
             if text and isinstance(text_pos, dict):
@@ -4275,21 +5431,56 @@ class DwgServiceCore:
                         tip = clean[0]
                         toward = clean[1]
                         seg_len = _point_distance(tip, toward)
-                        arrow_len = max(6.0, min(80.0, seg_len * 0.25))
+                        arrow_size_raw = geom.get("arrow_size")
+                        if isinstance(arrow_size_raw, (int, float)) and math.isfinite(float(arrow_size_raw)) and float(arrow_size_raw) > 0:
+                            arrow_len = max(3.0, min(160.0, float(arrow_size_raw)))
+                        else:
+                            arrow_len = max(6.0, min(80.0, seg_len * 0.25))
                         arrow_half = arrow_len * 0.5
                         inward = (float(toward["x"]) - float(tip["x"]), float(toward["y"]) - float(tip["y"]))
-                        tri = _arrow_marker_triangle_points(tip, inward, arrow_len, arrow_half)
-                        if tri:
-                            out.append(
-                                {
-                                    "kind": "polygon",
-                                    "rings": [tri],
-                                    "filled": True,
-                                    "pattern_name": "ARROW",
-                                    "arrow_fill": True,
-                                    "subtype": "leader_arrow_fill",
-                                }
-                            )
+                        arrow_block = geom.get("arrow_block")
+                        arrow_style = _normalize_arrow_style_name(arrow_block)
+                        if arrow_style == "archtick":
+                            tick_seg = _arrow_marker_archtick_segment(tip, inward, max(arrow_len, 4.0))
+                            if tick_seg:
+                                out.append(
+                                    {
+                                        "kind": "line",
+                                        "start": tick_seg[0],
+                                        "end": tick_seg[1],
+                                        "subtype": "leader_arrow_tick",
+                                        "arrow_style": arrow_style,
+                                        "arrow_block": arrow_block,
+                                    }
+                                )
+                        elif arrow_style == "open":
+                            open_lines = _arrow_marker_lines(tip, inward, arrow_len, arrow_half)
+                            for line_a, line_b in open_lines:
+                                out.append(
+                                    {
+                                        "kind": "line",
+                                        "start": line_a,
+                                        "end": line_b,
+                                        "subtype": "leader_arrow_open",
+                                        "arrow_style": arrow_style,
+                                        "arrow_block": arrow_block,
+                                    }
+                                )
+                        else:
+                            tri = _arrow_marker_triangle_points(tip, inward, arrow_len, arrow_half)
+                            if tri:
+                                out.append(
+                                    {
+                                        "kind": "polygon",
+                                        "rings": [tri],
+                                        "filled": True,
+                                        "pattern_name": "ARROW",
+                                        "arrow_fill": True,
+                                        "subtype": "leader_arrow_fill",
+                                        "arrow_style": arrow_style,
+                                        "arrow_block": arrow_block,
+                                    }
+                                )
             return out
 
         if et == "WIPEOUT":

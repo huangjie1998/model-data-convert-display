@@ -154,7 +154,7 @@ export function BackendFileUpload({
           ...f,
           status: 'error',
           progress: 100,
-          error: 'DWG direct service is offline. Start backend and ensure /api/dwg/health is reachable.',
+          error: 'DWG 直读服务离线，请先启动后端并确认 /api/dwg/health 可访问。',
         }));
         return;
       }
@@ -202,7 +202,7 @@ export function BackendFileUpload({
           onFileConverted(file, url, extension, extension);
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Conversion failed.';
+        const errorMessage = error instanceof Error ? error.message : '转换失败。';
         updateUploadingFile(uploadId, (f) => ({ ...f, status: 'error', error: errorMessage }));
       }
       return;
@@ -213,7 +213,7 @@ export function BackendFileUpload({
         ...f,
         status: 'needs_manual',
         progress: 100,
-        error: 'SKP auto-conversion service is offline. Convert to GLB manually first.',
+        error: 'SKP 自动转换服务离线，请先手动转换为 GLB 再上传。',
       }));
       const url = URL.createObjectURL(file);
       onFileConverted(file, url, extension, extension);
@@ -273,15 +273,15 @@ export function BackendFileUpload({
   const getStatusBadge = (file: UploadingFile) => {
     switch (file.status) {
       case 'uploading':
-        return <Badge variant="secondary" className="bg-blue-900/50 text-blue-400">Uploading</Badge>;
+        return <Badge variant="secondary" className="bg-blue-900/50 text-blue-400">上传中</Badge>;
       case 'converting':
-        return <Badge variant="secondary" className="bg-amber-900/50 text-amber-400">Converting</Badge>;
+        return <Badge variant="secondary" className="bg-amber-900/50 text-amber-400">转换中</Badge>;
       case 'completed':
-        return <Badge variant="secondary" className="bg-green-900/50 text-green-400">Completed</Badge>;
+        return <Badge variant="secondary" className="bg-green-900/50 text-green-400">已完成</Badge>;
       case 'needs_manual':
-        return <Badge variant="secondary" className="bg-orange-900/50 text-orange-400">Manual Step</Badge>;
+        return <Badge variant="secondary" className="bg-orange-900/50 text-orange-400">需手动处理</Badge>;
       case 'error':
-        return <Badge variant="destructive">Failed</Badge>;
+        return <Badge variant="destructive">失败</Badge>;
       default:
         return null;
     }
@@ -293,10 +293,10 @@ export function BackendFileUpload({
         <Alert className="bg-amber-900/20 border-amber-800">
           <AlertTriangle className="h-4 w-4 text-amber-500" />
           <AlertDescription className="text-amber-400 text-sm">
-            SKP auto-conversion service is offline. Upload GLB directly or convert SKP manually.
+            SKP 自动转换服务离线，请直接上传 GLB 或手动转换 SKP。
             {onSwitchToConverter && (
               <button onClick={onSwitchToConverter} className="underline ml-1 hover:text-amber-300">
-                View guide
+                查看指引
               </button>
             )}
           </AlertDescription>
@@ -307,7 +307,7 @@ export function BackendFileUpload({
         <Alert className="bg-red-900/20 border-red-800">
           <AlertTriangle className="h-4 w-4 text-red-500" />
           <AlertDescription className="text-red-300 text-sm">
-            DWG direct-view service is offline. Start backend and ensure /api/dwg/health is reachable.
+            DWG 直读服务离线，请先启动后端并确认 /api/dwg/health 可访问。
           </AlertDescription>
         </Alert>
       )}
@@ -315,15 +315,15 @@ export function BackendFileUpload({
       <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg">
         <div className="flex items-center gap-2">
           <Server className="h-4 w-4 text-blue-400" />
-          <span className="text-sm text-gray-300">Upload Service</span>
+          <span className="text-sm text-gray-300">上传服务</span>
           {supportsSkp && backendAvailable === false && (
             <Badge variant="secondary" className="bg-red-900/50 text-red-400 text-xs">
-              SKP convert offline
+              SKP 转换离线
             </Badge>
           )}
           {supportsDwg && dwgServiceAvailable === false && (
             <Badge variant="secondary" className="bg-red-900/50 text-red-400 text-xs">
-              DWG direct offline
+              DWG 直读离线
             </Badge>
           )}
         </div>
@@ -335,8 +335,8 @@ export function BackendFileUpload({
           className={supportsSkp && useBackend && backendAvailable ? 'bg-blue-600 hover:bg-blue-700' : 'border-gray-600'}
         >
           {supportsSkp
-            ? (useBackend && backendAvailable ? 'SKP Auto-Convert ON' : 'SKP Auto-Convert OFF')
-            : 'SKP Only'}
+            ? (useBackend && backendAvailable ? 'SKP 自动转换：开' : 'SKP 自动转换：关')
+            : '仅 SKP'}
         </Button>
       </div>
 
@@ -356,13 +356,13 @@ export function BackendFileUpload({
           </div>
 
           <div>
-            <p className="text-lg font-medium text-gray-200">{isDragActive ? 'Drop files to upload' : title}</p>
+            <p className="text-lg font-medium text-gray-200">{isDragActive ? '松开以上传文件' : title}</p>
             <p className="text-sm text-gray-500 mt-1">{description}</p>
             {supportsSkp && backendAvailable !== false && (
-              <p className="text-xs text-blue-400 mt-2">SKP files will be auto-converted to GLB.</p>
+              <p className="text-xs text-blue-400 mt-2">SKP 文件会自动转换为 GLB。</p>
             )}
             {supportsDwg && dwgServiceAvailable !== false && (
-              <p className="text-xs text-cyan-400 mt-2">DWG files are opened by direct CAD parsing (no DXF/PDF conversion).</p>
+              <p className="text-xs text-cyan-400 mt-2">DWG 将通过 CAD 直读方式打开（不走 DXF/PDF 转换）。</p>
             )}
           </div>
 
@@ -416,7 +416,7 @@ export function BackendFileUpload({
                 {uploadingFile.error && <p className="text-xs text-red-400 mt-1">{uploadingFile.error}</p>}
 
                 {uploadingFile.status === 'needs_manual' && (
-                  <p className="text-xs text-orange-400 mt-1">Please convert the file to a supported target format, then upload again.</p>
+                  <p className="text-xs text-orange-400 mt-1">请先将文件转换为支持的目标格式后再上传。</p>
                 )}
               </div>
 

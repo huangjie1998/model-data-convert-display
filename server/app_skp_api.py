@@ -627,7 +627,7 @@ def dwg_close(doc_id):
 def upload_file():
     """Upload file and auto-convert if needed."""
     if 'file' not in request.files:
-        return jsonify({'error': '娌℃湁鏂囦欢'}), 400
+        return jsonify({'error': '没有文件'}), 400
     
     file = request.files['file']
     if file.filename == '':
@@ -635,7 +635,7 @@ def upload_file():
     
     if not allowed_file(file.filename):
         return jsonify({
-            'error': '娑撳秵鏁幐浣烘畱閺傚洣娆㈤弽鐓庣础',
+            'error': '不支持的文件格式',
             'supported_formats': list(ALLOWED_EXTENSIONS)
         }), 400
     

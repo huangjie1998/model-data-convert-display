@@ -7,7 +7,20 @@ import { Model3DViewer } from '@/components/viewer/Model3DViewer';
 import { Drawing2DViewer } from '@/components/viewer/Drawing2DViewer';
 import { FormatConverter } from '@/components/FormatConverter';
 import { healthCheck, checkConverterStatus } from '@/services/converterApi';
-import { Box, FileText, Upload, Settings, Layers, Building2, Menu, X, Server, CheckCircle2, AlertCircle, Eye } from 'lucide-react';
+import {
+  Box,
+  FileText,
+  Upload,
+  Settings,
+  Layers,
+  Building2,
+  Menu,
+  X,
+  Server,
+  CheckCircle2,
+  AlertCircle,
+  Eye,
+} from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
@@ -27,18 +40,47 @@ interface UploadedFile {
 
 interface BackendStatus {
   connected: boolean;
-  tools: { [key: string]: boolean };
+  tools: Record<string, boolean>;
 }
 
 type MainPage = 'upload' | 'viewer' | 'convert';
-type FileKind = '3d' | '2d';
+
+const MODEL_FORMATS = new Set(['gltf', 'glb', 'obj', 'fbx', 'skp']);
+const DRAWING_FORMATS = new Set(['pdf', 'png', 'jpg', 'jpeg', 'dxf', 'dwg']);
+const ALL_UPLOAD_FORMATS = ['gltf', 'glb', 'obj', 'fbx', 'skp', 'pdf', 'png', 'jpg', 'jpeg', 'dxf', 'dwg'];
+
+function normalizeType(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function resolveCategory(type: string, originalType: string): '3d' | '2d' {
+  const normalizedType = normalizeType(type);
+  const normalizedOriginal = normalizeType(originalType);
+
+  if (MODEL_FORMATS.has(normalizedType) || MODEL_FORMATS.has(normalizedOriginal)) {
+    return '3d';
+  }
+  if (DRAWING_FORMATS.has(normalizedType) || DRAWING_FORMATS.has(normalizedOriginal)) {
+    return '2d';
+  }
+
+  return '2d';
+}
+
+function isModelType(type: string | null | undefined, originalType: string | null | undefined): boolean {
+  const normalizedType = normalizeType(type);
+  const normalizedOriginal = normalizeType(originalType);
+  return MODEL_FORMATS.has(normalizedType) || MODEL_FORMATS.has(normalizedOriginal);
+}
+
+function createFileId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 function App() {
   const [mainPage, setMainPage] = useState<MainPage>('viewer');
-  const [activeKind, setActiveKind] = useState<FileKind>('3d');
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [current3DFile, setCurrent3DFile] = useState<UploadedFile | null>(null);
-  const [current2DFile, setCurrent2DFile] = useState<UploadedFile | null>(null);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [backendStatus, setBackendStatus] = useState<BackendStatus | null>(null);
   const [showBackendStatus, setShowBackendStatus] = useState(false);
@@ -65,73 +107,49 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const handle3DFileUpload = useCallback((file: File, url: string, type: string, originalType: string) => {
+  const selectedFile = useMemo(
+    () => uploadedFiles.find((file) => file.id === selectedFileId) ?? null,
+    [selectedFileId, uploadedFiles]
+  );
+
+  const selectedFileIsModel = useMemo(
+    () => (selectedFile ? isModelType(selectedFile.type, selectedFile.originalType) : false),
+    [selectedFile]
+  );
+
+  const handleFileUpload = useCallback((file: File, url: string, type: string, originalType: string) => {
     const newFile: UploadedFile = {
-      id: Math.random().toString(36).substring(7),
+      id: createFileId(),
       name: file.name,
       url,
       type,
       originalType,
       rawFile: file,
-      category: '3d',
+      category: resolveCategory(type, originalType),
       uploadTime: new Date(),
-      converted: originalType !== type,
+      converted: normalizeType(type) !== normalizeType(originalType),
     };
     setUploadedFiles((prev) => [...prev, newFile]);
   }, []);
 
-  const handle2DFileUpload = useCallback((file: File, url: string, type: string, originalType: string) => {
-    const newFile: UploadedFile = {
-      id: Math.random().toString(36).substring(7),
-      name: file.name,
-      url,
-      type,
-      originalType,
-      rawFile: file,
-      category: '2d',
-      uploadTime: new Date(),
-      converted: originalType !== type,
-    };
-    setUploadedFiles((prev) => [...prev, newFile]);
-  }, []);
-
-  const selectFile = (file: UploadedFile) => {
-    if (file.category === '3d') {
-      setCurrent3DFile(file);
-      setActiveKind('3d');
-    } else {
-      setCurrent2DFile(file);
-      setActiveKind('2d');
-    }
+  const selectFile = useCallback((file: UploadedFile) => {
+    setSelectedFileId(file.id);
     setMainPage('viewer');
-  };
+  }, []);
 
-  const deleteFile = (id: string) => {
-    setUploadedFiles((prev) => prev.filter((f) => f.id !== id));
-    if (current3DFile?.id === id) setCurrent3DFile(null);
-    if (current2DFile?.id === id) setCurrent2DFile(null);
-  };
+  const deleteFile = useCallback(
+    (id: string) => {
+      setUploadedFiles((prev) => prev.filter((file) => file.id !== id));
+      if (selectedFileId === id) {
+        setSelectedFileId(null);
+      }
+    },
+    [selectedFileId]
+  );
 
-  const getFileIcon = (type: string) => {
-    const iconMap: { [key: string]: string } = {
-      skp: '📐',
-      dwg: '📏',
-      dxf: '🧾',
-      pdf: '📄',
-      gltf: '🧊',
-      glb: '🧊',
-      obj: '📦',
-      fbx: '📦',
-      png: '🖼️',
-      jpg: '🖼️',
-      jpeg: '🖼️',
-    };
-    return iconMap[type] || '📁';
+  const getFileIcon = (file: UploadedFile) => {
+    return file.category === '3d' ? '3D' : '2D';
   };
-
-  const currentViewingFile = useMemo(() => {
-    return activeKind === '3d' ? current3DFile : current2DFile;
-  }, [activeKind, current2DFile, current3DFile]);
 
   const renderUploadPage = () => {
     return (
@@ -139,31 +157,21 @@ function App() {
         <Card className="bg-gray-900 border-gray-800 h-full min-h-0 flex flex-col">
           <CardHeader>
             <CardTitle className="text-lg text-gray-100 flex items-center gap-2">
-              <Upload className={`h-5 w-5 ${activeKind === '3d' ? 'text-blue-400' : 'text-green-400'}`} />
-              {activeKind === '3d' ? '上传 3D 模型' : '上传 2D 图纸'}
+              <Upload className="h-5 w-5 text-cyan-400" />
+              上传文件
             </CardTitle>
             <CardDescription className="text-gray-400">
-              {activeKind === '3d' ? '支持 GLTF, GLB, OBJ, FBX, SKP。上传后自动进入查看页面。' : '支持 PDF, PNG, JPG, DXF, DWG。上传后自动进入查看页面。'}
+              3D 模型和 2D 图纸统一上传，系统会根据文件格式自动选择查看方式。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex-1 min-h-0">
-            {activeKind === '3d' ? (
-              <BackendFileUpload
-                onFileConverted={handle3DFileUpload}
-                acceptedFormats={['gltf', 'glb', 'obj', 'fbx', 'skp']}
-                title="拖拽 3D 模型到此处"
-                description="或点击选择文件（支持多选）"
-                onSwitchToConverter={() => setMainPage('convert')}
-              />
-            ) : (
-              <BackendFileUpload
-                onFileConverted={handle2DFileUpload}
-                acceptedFormats={['pdf', 'png', 'jpg', 'jpeg', 'dxf', 'dwg']}
-                title="拖拽 2D 图纸到此处"
-                description="或点击选择文件（支持多选）"
-                onSwitchToConverter={() => setMainPage('convert')}
-              />
-            )}
+            <BackendFileUpload
+              onFileConverted={handleFileUpload}
+              acceptedFormats={ALL_UPLOAD_FORMATS}
+              title="拖拽文件到此处"
+              description="或点击选择文件（支持多选）"
+              onSwitchToConverter={() => setMainPage('convert')}
+            />
           </CardContent>
         </Card>
       </div>
@@ -171,44 +179,53 @@ function App() {
   };
 
   const renderViewerPage = () => {
-    const showViewerHeader = activeKind !== '2d';
     return (
       <Card className="bg-gray-900 border-gray-800 h-full min-h-0 flex flex-col">
-        {showViewerHeader && (
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg text-gray-100 flex items-center gap-2">
-              <Box className="h-5 w-5 text-blue-400" />
-              3D 模型查看器
-            </CardTitle>
-            <CardDescription className="text-gray-400">
-              <span>
-                {currentViewingFile ? (
-                  <span className="inline-flex items-center gap-2">
-                    {currentViewingFile.name}
-                    {currentViewingFile.converted && (
-                      <Badge variant="secondary" className="bg-amber-900/50 text-amber-400 text-xs">
-                        {currentViewingFile.originalType.toUpperCase()} → {currentViewingFile.type.toUpperCase()}
-                      </Badge>
-                    )}
-                  </span>
-                ) : (
-                  '未选择文件'
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg text-gray-100 flex items-center gap-2">
+            <Eye className="h-5 w-5 text-emerald-300" />
+            文件查看器
+          </CardTitle>
+          <CardDescription className="text-gray-400">
+            {selectedFile ? (
+              <span className="inline-flex items-center gap-2">
+                {selectedFile.name}
+                {selectedFile.converted && (
+                  <Badge variant="secondary" className="bg-amber-900/50 text-amber-400 text-xs">
+                    {selectedFile.originalType.toUpperCase()} -&gt; {selectedFile.type.toUpperCase()}
+                  </Badge>
                 )}
               </span>
-            </CardDescription>
-          </CardHeader>
-        )}
+            ) : (
+              '未选择文件'
+            )}
+          </CardDescription>
+        </CardHeader>
         <CardContent className="p-0 flex-1 min-h-0">
           <div className="h-full min-h-[620px]">
             <ErrorBoundary>
-              {activeKind === '3d' ? (
-                <Model3DViewer fileUrl={current3DFile?.url || null} fileType={current3DFile?.type || null} fileName={current3DFile?.name} />
-              ) : (
+              {!selectedFile && (
+                <div className="h-full flex items-center justify-center text-center px-6 text-gray-500">
+                  <div>
+                    <Eye className="h-16 w-16 mx-auto mb-4 opacity-40" />
+                    <p className="text-lg font-medium text-gray-300">未选择文件</p>
+                    <p className="text-sm mt-2">请先上传文件，或从左侧列表中选择一个文件进行查看。</p>
+                  </div>
+                </div>
+              )}
+              {selectedFile && selectedFileIsModel && (
+                <Model3DViewer
+                  fileUrl={selectedFile.url || null}
+                  fileType={selectedFile.type || null}
+                  fileName={selectedFile.name}
+                />
+              )}
+              {selectedFile && !selectedFileIsModel && (
                 <Drawing2DViewer
-                  fileUrl={current2DFile?.url || null}
-                  fileType={current2DFile?.type || null}
-                  fileName={current2DFile?.name}
-                  rawFile={current2DFile?.rawFile || null}
+                  fileUrl={selectedFile.url || null}
+                  fileType={selectedFile.type || null}
+                  fileName={selectedFile.name}
+                  rawFile={selectedFile.rawFile || null}
                 />
               )}
             </ErrorBoundary>
@@ -224,9 +241,11 @@ function App() {
         <CardHeader>
           <CardTitle className="text-lg text-gray-100 flex items-center gap-2">
             <Settings className="h-5 w-5 text-amber-400" />
-            文件格式转换
+            格式转换
           </CardTitle>
-          <CardDescription className="text-gray-400">用于手动转换 SKP / DWG 等文件，转换后再进入查看页面。</CardDescription>
+          <CardDescription className="text-gray-400">
+            用于手动转换 SKP / DWG 等格式。
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <FormatConverter />
@@ -256,7 +275,10 @@ function App() {
           </div>
 
           <div className="px-4 py-2 border-b border-gray-800">
-            <button onClick={() => setShowBackendStatus(true)} className="flex items-center gap-2 w-full p-2 rounded-lg hover:bg-gray-800 transition-colors">
+            <button
+              onClick={() => setShowBackendStatus(true)}
+              className="flex items-center gap-2 w-full p-2 rounded-lg hover:bg-gray-800 transition-colors"
+            >
               <Server className="h-4 w-4 text-gray-400" />
               <span className="text-sm text-gray-400">转换服务</span>
               {backendStatus?.connected ? (
@@ -289,28 +311,28 @@ function App() {
                       className={`
                         group flex items-center gap-2 p-2 rounded-lg cursor-pointer
                         transition-colors
-                        ${(current3DFile?.id === file.id || current2DFile?.id === file.id)
-                          ? 'bg-blue-600/20 border border-blue-600/50'
-                          : 'hover:bg-gray-800 border border-transparent'}
+                        ${selectedFileId === file.id ? 'bg-blue-600/20 border border-blue-600/50' : 'hover:bg-gray-800 border border-transparent'}
                       `}
                     >
-                      <span className="text-lg">{getFileIcon(file.originalType)}</span>
+                      <span className="inline-flex items-center justify-center text-xs font-semibold w-8 h-6 rounded bg-gray-800 text-gray-300">
+                        {getFileIcon(file)}
+                      </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1">
                           <p className="text-sm text-gray-200 truncate">{file.name}</p>
-                          {file.converted && <span className="text-xs text-amber-400">→</span>}
+                          {file.converted && <span className="text-xs text-amber-400">-&gt;</span>}
                         </div>
                         <p className="text-xs text-gray-500">
                           {file.category === '3d' ? '3D 模型' : '2D 图纸'}
-                          {file.converted && ` (${file.originalType.toUpperCase()} → ${file.type.toUpperCase()})`}
+                          {file.converted && ` (${file.originalType.toUpperCase()} -> ${file.type.toUpperCase()})`}
                         </p>
                       </div>
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-6 w-6 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400"
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        onClick={(event) => {
+                          event.stopPropagation();
                           deleteFile(file.id);
                         }}
                       >
@@ -334,7 +356,12 @@ function App() {
         <header className="sticky top-0 z-40 bg-gray-950/80 backdrop-blur-md border-b border-gray-800">
           <div className="flex items-center justify-between px-4 py-3">
             <div className="flex items-center gap-3">
-              <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)} className="text-gray-400 hover:text-gray-200">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="text-gray-400 hover:text-gray-200"
+              >
                 {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
               </Button>
 
@@ -366,20 +393,10 @@ function App() {
               </nav>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" className={`gap-2 ${activeKind === '3d' ? 'text-blue-400 bg-blue-400/10' : 'text-gray-400'}`} onClick={() => setActiveKind('3d')}>
-                <Box className="h-4 w-4" />
-                3D
-              </Button>
-              <Button
-                variant="ghost"
-                className={`gap-2 ${activeKind === '2d' ? 'text-green-400 bg-green-400/10' : 'text-gray-400'}`}
-                onClick={() => setActiveKind('2d')}
-              >
-                <FileText className="h-4 w-4" />
-                2D
-              </Button>
-              <span className="text-sm text-gray-500 ml-2">{uploadedFiles.length} 个文件</span>
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <Box className="h-4 w-4 text-blue-400" />
+              <FileText className="h-4 w-4 text-green-400" />
+              <span>{uploadedFiles.length} 个文件</span>
             </div>
           </div>
         </header>
@@ -398,7 +415,9 @@ function App() {
               <Server className="h-5 w-5 text-blue-400" />
               转换服务状态
             </DialogTitle>
-            <DialogDescription className="text-gray-400">后端自动转换服务的状态信息。</DialogDescription>
+            <DialogDescription className="text-gray-400">
+              后端服务可用性与转换工具状态信息。
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 mt-4">
@@ -408,7 +427,7 @@ function App() {
                   <CheckCircle2 className="h-5 w-5 text-green-500" />
                   <div>
                     <p className="font-medium text-gray-200">服务在线</p>
-                    <p className="text-sm text-gray-400">SKP 与 DWG 可自动处理</p>
+                    <p className="text-sm text-gray-400">SKP 与 DWG 自动处理可用。</p>
                   </div>
                 </>
               ) : (
@@ -416,7 +435,7 @@ function App() {
                   <AlertCircle className="h-5 w-5 text-amber-500" />
                   <div>
                     <p className="font-medium text-gray-200">服务离线</p>
-                    <p className="text-sm text-gray-400">请检查后端进程与端口</p>
+                    <p className="text-sm text-gray-400">请检查后端进程与端口设置。</p>
                   </div>
                 </>
               )}
@@ -429,7 +448,11 @@ function App() {
                   {Object.entries(backendStatus.tools).map(([tool, available]) => (
                     <div key={tool} className="flex items-center justify-between p-2 bg-gray-800 rounded">
                       <span className="text-sm text-gray-400">{tool}</span>
-                      {available ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <span className="text-xs text-gray-500">未安装</span>}
+                      {available ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <span className="text-xs text-gray-500">未安装</span>
+                      )}
                     </div>
                   ))}
                 </div>

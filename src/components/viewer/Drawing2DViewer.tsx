@@ -94,10 +94,10 @@ export function Drawing2DViewer({ fileUrl, fileType, fileName, rawFile = null }:
   const renderDefaultDrawing = () => (
     <div className="flex flex-col items-center justify-center h-full text-gray-500 px-6 text-center">
       <FileText className="h-24 w-24 mb-4 opacity-30" />
-      <p className="text-lg font-medium">No 2D drawing selected</p>
-      <p className="text-sm mt-2">Upload PDF, PNG, JPG, DXF, or DWG files.</p>
+      <p className="text-lg font-medium">未选择 2D 图纸</p>
+      <p className="text-sm mt-2">请上传 PDF、PNG、JPG、DXF 或 DWG 文件。</p>
       <div className="mt-6 p-4 bg-gray-800 rounded-lg max-w-md w-full">
-        <p className="text-xs text-gray-400 mb-2">Supported formats:</p>
+        <p className="text-xs text-gray-400 mb-2">支持格式：</p>
         <div className="flex flex-wrap justify-center gap-2">
           <span className="px-2 py-1 bg-gray-700 rounded text-xs">PDF</span>
           <span className="px-2 py-1 bg-gray-700 rounded text-xs">PNG</span>
@@ -113,7 +113,7 @@ export function Drawing2DViewer({ fileUrl, fileType, fileName, rawFile = null }:
     <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-300">2D Viewer</span>
+          <span className="text-sm font-medium text-gray-300">2D 查看器</span>
           {fileUrl && normalizedType && <span className="text-xs text-gray-500">({getFileTypeDisplay()})</span>}
         </div>
         <div className="flex items-center gap-1">
@@ -124,7 +124,7 @@ export function Drawing2DViewer({ fileUrl, fileType, fileName, rawFile = null }:
               onClick={() => setShowDXFViewer((prev) => !prev)}
               className={`h-8 text-xs ${showDXFViewer ? 'text-blue-400' : 'text-gray-400'}`}
             >
-              {showDXFViewer ? 'Simple Mode' : 'DXF Mode'}
+              {showDXFViewer ? '简洁模式' : 'DXF 模式'}
             </Button>
           )}
           <Button
@@ -132,7 +132,7 @@ export function Drawing2DViewer({ fileUrl, fileType, fileName, rawFile = null }:
             size="icon"
             onClick={handleRotate}
             className="h-8 w-8 text-gray-400 hover:text-white"
-            title="Rotate"
+            title="旋转"
           >
             <RotateCcw className="h-4 w-4" />
           </Button>
@@ -142,7 +142,7 @@ export function Drawing2DViewer({ fileUrl, fileType, fileName, rawFile = null }:
             size="icon"
             onClick={handleZoomIn}
             className="h-8 w-8 text-gray-400 hover:text-white"
-            title="Zoom In"
+            title="放大"
           >
             <ZoomIn className="h-4 w-4" />
           </Button>
@@ -151,7 +151,7 @@ export function Drawing2DViewer({ fileUrl, fileType, fileName, rawFile = null }:
             size="icon"
             onClick={handleZoomOut}
             className="h-8 w-8 text-gray-400 hover:text-white"
-            title="Zoom Out"
+            title="缩小"
           >
             <ZoomOut className="h-4 w-4" />
           </Button>
@@ -160,7 +160,7 @@ export function Drawing2DViewer({ fileUrl, fileType, fileName, rawFile = null }:
             size="icon"
             onClick={handleReset}
             className="h-8 w-8 text-gray-400 hover:text-white"
-            title="Reset View"
+            title="重置视图"
           >
             <Maximize className="h-4 w-4" />
           </Button>
@@ -172,7 +172,7 @@ export function Drawing2DViewer({ fileUrl, fileType, fileName, rawFile = null }:
                 size="icon"
                 onClick={() => window.open(fileUrl, '_blank')}
                 className="h-8 w-8 text-gray-400 hover:text-white"
-                title="Download"
+                title="下载"
               >
                 <Download className="h-4 w-4" />
               </Button>
@@ -193,7 +193,7 @@ export function Drawing2DViewer({ fileUrl, fileType, fileName, rawFile = null }:
         {error ? (
           <div className="flex flex-col items-center justify-center h-full text-amber-500 px-4">
             <AlertTriangle className="h-16 w-16 mb-4 opacity-50" />
-            <p className="text-lg font-medium mb-2">Failed to view file</p>
+            <p className="text-lg font-medium mb-2">文件查看失败</p>
             <p className="text-sm text-gray-400 max-w-md text-center">{error}</p>
           </div>
         ) : fileUrl ? (
@@ -205,7 +205,7 @@ export function Drawing2DViewer({ fileUrl, fileType, fileName, rawFile = null }:
             }}
           >
             {normalizedType === 'pdf' ? (
-              <iframe src={fileUrl} className="w-full h-full border-0" title="PDF Viewer" />
+              <iframe src={fileUrl} className="w-full h-full border-0" title="PDF 查看器" />
             ) : (
               <img
                 ref={imageRef}

@@ -18,6 +18,7 @@ import {
   type DwgPrimitive,
   type DwgEntityLite,
   type DwgSpace,
+  type DwgOpenResponse,
 } from '@/services/dwgApi';
 
 interface CADViewerProps {
@@ -54,6 +55,55 @@ interface CachedLineMetrics {
   rightOverhang: number;
   ascent: number;
   descent: number;
+}
+
+interface ShxDebugMatch {
+  vectorizeTextEntityCount: number;
+  vectorizeTextKeysCount: number;
+  vectorizePrimitivesTotal: number;
+  shapeFileTextTrueCount: number;
+  attachCandidateEntityCount: number;
+  matchedEntityCount: number;
+  unmatchedEntityCount: number;
+  noVectorizePayloadCount: number;
+  keyMismatchCount: number;
+  filteredByFontKindCount: number;
+  emptyAfterOptimizeCount: number;
+  filteredNonShxCount: number;
+  vectorizeCacheHit: boolean;
+  vectorizeError: string | null;
+  vectorizeTextKeySamples: string[];
+  unmatchedKeySamples: string[];
+  orphanVectorizeKeySamples: string[];
+  keyMismatchSamples: Array<{
+    entityId: string;
+    handle: string;
+    instancePath: string[];
+    candidateKeys: string[];
+  }>;
+}
+
+interface ShxRenderStatus {
+  detected: boolean;
+  outlineMode: 'none' | 'oda_vectorize' | 'stub' | 'disabled' | string;
+  trueOutline: boolean;
+  vectorizeAttempted: boolean;
+  vectorizeAttachedCount: number;
+  vectorizeError: string | null;
+  fallbackTextCount: number;
+  vectorizeAvailable: boolean;
+  missingOriginalShxFonts: string[];
+  resolvedOriginalShxFonts: string[];
+  fallbackShxFile: string | null;
+  fallbackHitCount: number;
+  diagnosticsUnavailable: boolean;
+  debugMatch: ShxDebugMatch | null;
+}
+
+interface WarningLineItem {
+  id: string;
+  text: string;
+  kind: 'normal' | 'shx_diagnostic';
 }
 
 function isFiniteNumber(v: unknown): v is number {
@@ -112,6 +162,28 @@ const BLOCK_PICK_BOX_SIZE_PX = 6;
 const PICK_TOLERANCE_FACTORS = [0.65, 0.9, 1.1] as const;
 const BOX_SELECT_DRAG_THRESHOLD_PX = 4;
 const CAD_TEXT_FALLBACK_FONT = '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif';
+const DEFAULT_NORMAL_LINEWEIGHT_MM = 0.25;
+const NORMAL_LINEWEIGHT_MM_TO_PX = 2.2; // 中等基准：1mm -> 2.2px（固定屏幕线宽）
+const NORMAL_LINEWEIGHT_MIN_PX = 0.9;
+const NORMAL_LINEWEIGHT_MAX_PX = 16;
+const GEOMETRIC_LINEWEIGHT_MIN_PX = 0.55;
+const GEOMETRIC_LINEWEIGHT_MAX_PX = 220;
+const DEFAULT_SHX_RENDER_STATUS: ShxRenderStatus = {
+  detected: false,
+  outlineMode: 'none',
+  trueOutline: false,
+  vectorizeAttempted: false,
+  vectorizeAttachedCount: 0,
+  vectorizeError: null,
+  fallbackTextCount: 0,
+  vectorizeAvailable: false,
+  missingOriginalShxFonts: [],
+  resolvedOriginalShxFonts: [],
+  fallbackShxFile: null,
+  fallbackHitCount: 0,
+  diagnosticsUnavailable: false,
+  debugMatch: null,
+};
 
 function sanitizeCssFontFamily(raw: unknown): string {
   const s = String(raw || '').trim().replace(/['"]/g, '');
@@ -184,6 +256,244 @@ function firstNonEmptyString(values: unknown[]): string | null {
   return null;
 }
 
+function toUniqueStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const t = String(item ?? '').trim();
+    if (!t) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
+function toNonNegativeInt(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+
+function normalizeShxDebugMatch(raw: unknown): ShxDebugMatch | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const vectorizeError = String(obj.vectorize_error ?? '').trim();
+  const keyMismatchSamplesRaw = Array.isArray(obj.key_mismatch_samples) ? obj.key_mismatch_samples : [];
+  const keyMismatchSamples = keyMismatchSamplesRaw
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .slice(0, 10)
+    .map((item) => ({
+      entityId: String(item.entity_id ?? '').trim(),
+      handle: String(item.handle ?? '').trim(),
+      instancePath: toUniqueStringList(item.instance_path),
+      candidateKeys: toUniqueStringList(item.candidate_keys),
+    }));
+  return {
+    vectorizeTextEntityCount: toNonNegativeInt(obj.vectorize_text_entity_count),
+    vectorizeTextKeysCount: toNonNegativeInt(obj.vectorize_text_keys_count),
+    vectorizePrimitivesTotal: toNonNegativeInt(obj.vectorize_primitives_total),
+    shapeFileTextTrueCount: toNonNegativeInt(obj.shape_file_text_true_count),
+    attachCandidateEntityCount: toNonNegativeInt(obj.attach_candidate_entity_count),
+    matchedEntityCount: toNonNegativeInt(obj.matched_entity_count),
+    unmatchedEntityCount: toNonNegativeInt(obj.unmatched_entity_count),
+    noVectorizePayloadCount: toNonNegativeInt(obj.no_vectorize_payload_count),
+    keyMismatchCount: toNonNegativeInt(obj.key_mismatch_count),
+    filteredByFontKindCount: toNonNegativeInt(obj.filtered_by_font_kind_count),
+    emptyAfterOptimizeCount: toNonNegativeInt(obj.empty_after_optimize_count),
+    filteredNonShxCount: toNonNegativeInt(obj.filtered_non_shx_count),
+    vectorizeCacheHit: Boolean(obj.vectorize_cache_hit),
+    vectorizeError: vectorizeError || null,
+    vectorizeTextKeySamples: toUniqueStringList(obj.vectorize_text_key_samples),
+    unmatchedKeySamples: toUniqueStringList(obj.unmatched_key_samples),
+    orphanVectorizeKeySamples: toUniqueStringList(obj.orphan_vectorize_key_samples),
+    keyMismatchSamples,
+  };
+}
+
+function resolveShxRenderStatus(opened: DwgOpenResponse): ShxRenderStatus {
+  const raw = opened.shx_status;
+  const outlineMode = String(raw?.outline_mode ?? opened.shx_outline_mode ?? 'none');
+  const vectorizeAttachedCountRaw = Number(raw?.vectorize_attached_count);
+  const fallbackTextCountRaw = Number(raw?.fallback_text_count);
+  const vectorizeAttachedCount = Number.isFinite(vectorizeAttachedCountRaw) ? Math.max(0, vectorizeAttachedCountRaw) : 0;
+  const fallbackTextCount = Number.isFinite(fallbackTextCountRaw) ? Math.max(0, fallbackTextCountRaw) : 0;
+  const fallbackHitCountRaw = Number(raw?.fallback_hit_count);
+  const fallbackHitCount = Number.isFinite(fallbackHitCountRaw) ? Math.max(0, fallbackHitCountRaw) : 0;
+  const trueOutline = Boolean(raw?.true_outline) || (outlineMode === 'oda_vectorize' && vectorizeAttachedCount > 0 && fallbackTextCount === 0);
+  const vectorizeErrorText = String(raw?.vectorize_error ?? '').trim();
+  const missingOriginalShxFonts = toUniqueStringList(raw?.missing_original_shx_fonts);
+  const resolvedOriginalShxFonts = toUniqueStringList(raw?.resolved_original_shx_fonts);
+  const fallbackShxFile = String(raw?.fallback_shx_file ?? '').trim() || null;
+  const debugMatch = normalizeShxDebugMatch(raw?.debug_match);
+  return {
+    detected: Boolean(raw?.detected) || fallbackTextCount > 0,
+    outlineMode,
+    trueOutline,
+    vectorizeAttempted: Boolean(raw?.vectorize_attempted),
+    vectorizeAttachedCount,
+    vectorizeError: vectorizeErrorText ? vectorizeErrorText : null,
+    fallbackTextCount,
+    vectorizeAvailable: Boolean(raw?.vectorize_available),
+    missingOriginalShxFonts,
+    resolvedOriginalShxFonts,
+    fallbackShxFile,
+    fallbackHitCount,
+    diagnosticsUnavailable: Boolean(raw?.diagnostics_unavailable),
+    debugMatch,
+  };
+}
+
+function isShxFallbackText(status: ShxRenderStatus, fontKindRaw: unknown): boolean {
+  const fontKind = String(fontKindRaw || '').trim().toLowerCase();
+  if (fontKind !== 'shx') return false;
+  if (status.trueOutline) return false;
+  return true;
+}
+
+function truncateCadLine(line: string, maxChars: number): string {
+  if (!line || line.length <= maxChars) return line;
+  return `${line.slice(0, maxChars)}...`;
+}
+
+function translateDwgWarningToCn(raw: unknown): string {
+  const text = String(raw ?? '').trim();
+  if (!text) return '';
+
+  if (/^SHX ODA outline extraction produced no matched text entities; fallback to stroke emulation\.?$/i.test(text)) {
+    return 'SHX 轮廓提取未匹配到可替换文字实体，已回退为笔画模拟渲染。';
+  }
+  const shxFailed = text.match(/^SHX ODA outline extraction failed \((.+)\); fallback to stroke emulation\.?$/i);
+  if (shxFailed) {
+    return `SHX 轮廓提取失败（${shxFailed[1]}），已回退为笔画模拟渲染。`;
+  }
+  if (/^OdVectorizeEx not configured\/found; SHX uses stroke outline emulation\.?$/i.test(text)) {
+    return '未配置或未找到 OdVectorizeEx，SHX 将使用笔画模拟渲染。';
+  }
+  if (/^ODA parser loaded the DWG but did not extract supported entities yet\.?$/i.test(text)) {
+    return 'ODA 已加载 DWG，但尚未提取到可显示的受支持图元。';
+  }
+  if (/^SHX font file not found on server\.?$/i.test(text)) {
+    return 'SHX 字体文件在服务器未找到。';
+  }
+  if (/^Font file not found on server\.?$/i.test(text)) {
+    return '字体文件在服务器未找到。';
+  }
+  if (/^Remote DWG core did not expose \/fonts endpoint\.?$/i.test(text)) {
+    return '远端 DWG 内核未提供 /fonts 接口，无法返回字体明细。';
+  }
+  if (/^Current file is not a DWG document\.?$/i.test(text)) {
+    return '当前文件不是 DWG 图纸。';
+  }
+
+  return text;
+}
+function normalizeWarningsForUi(warningsRaw: unknown[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of warningsRaw) {
+    const localized = translateDwgWarningToCn(raw).trim();
+    if (!localized) continue;
+    if (seen.has(localized)) continue;
+    seen.add(localized);
+    out.push(localized);
+  }
+  return out;
+}
+
+function parseMissingFontWarningForUi(warningRaw: string): { title: string; items: string[] } | null {
+  const warning = String(warningRaw || '').trim();
+  let title = '';
+  let detail = '';
+  if (warning.startsWith('以下字体文件在服务器未找到')) {
+    title = '字体缺失名单';
+    detail = warning.replace(/^以下字体文件在服务器未找到[:：]?/, '').trim();
+    detail = detail.replace(/。?已按可用字体或降级策略渲染。?$/, '').trim();
+  } else if (warning.startsWith('未命中原始 SHX 字体')) {
+    title = 'SHX未命中名单';
+    detail = warning.replace(/^未命中原始 SHX 字体[:：]?/, '').trim();
+    detail = detail
+      .replace(/。?已使用后备字体.*$/, '')
+      .replace(/。?未检测到后备 SHX 字体。?$/, '')
+      .trim();
+  } else {
+    return null;
+  }
+
+  if (!detail) return { title, items: [] };
+
+  const normalized = detail.replace(/[，；]/g, ';');
+  const rawItems = normalized
+    .split(';')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const items =
+    title === 'SHX未命中名单' && rawItems.length === 1
+      ? rawItems[0]
+          .split('、')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+      : rawItems;
+  return { title, items };
+}
+function buildShxFontDiagnosticFromDocFonts(status: ShxRenderStatus, fonts: DwgDocFont[]): string | null {
+  if (!status.detected || status.trueOutline) return null;
+
+  if (status.missingOriginalShxFonts.length > 0) {
+    const shown = status.missingOriginalShxFonts.slice(0, 8);
+    const suffix = status.missingOriginalShxFonts.length > 8 ? ` 等${status.missingOriginalShxFonts.length}项` : '';
+    const fallbackNote = status.fallbackShxFile ? `，已使用后备字体 ${status.fallbackShxFile}` : '';
+    return `SHX 字体诊断：未命中原始 SHX 字体 ${shown.join('、')}${suffix}${fallbackNote}。`;
+  }
+
+  if (status.diagnosticsUnavailable) {
+    return 'SHX 字体诊断：远端未提供完整字体诊断信息，当前降级可能由轮廓匹配失败或字体未命中导致。';
+  }
+
+  const shxFonts = fonts.filter((f) => String(f.kind || '').trim().toLowerCase() === 'shx');
+  if (!shxFonts.length) {
+    return 'SHX 字体诊断：未获取到 SHX 字体明细，当前降级可能是轮廓匹配失败或远端未返回字体信息。';
+  }
+
+  const missing: string[] = [];
+  const found: string[] = [];
+  const seenMissing = new Set<string>();
+  const seenFound = new Set<string>();
+  let fallbackFileName: string | null = status.fallbackShxFile;
+
+  for (const font of shxFonts) {
+    const label = String(font.name || font.style_name || font.key || '').trim() || '未命名SHX';
+    const reason = String(font.reason || '').toLowerCase();
+    const fallbackHit = Boolean(font.fallback_shx_hit);
+    const fallbackFile = String(font.fallback_shx_file_name || '').trim();
+    if (!fallbackFileName && fallbackFile) fallbackFileName = fallbackFile;
+    const looksMissing = fallbackHit || !font.available || reason.includes('not found') || reason.includes('未找到');
+    if (looksMissing) {
+      if (!seenMissing.has(label)) {
+        seenMissing.add(label);
+        missing.push(label);
+      }
+      continue;
+    }
+    if (!seenFound.has(label)) {
+      seenFound.add(label);
+      found.push(label);
+    }
+  }
+
+  if (missing.length > 0) {
+    const shown = missing.slice(0, 8);
+    const suffix = missing.length > 8 ? ` 等${missing.length}项` : '';
+    const fallbackNote = fallbackFileName ? `，已使用后备字体 ${fallbackFileName}` : '';
+    return `SHX 字体诊断：未命中原始 SHX 字体 ${shown.join('、')}${suffix}${fallbackNote}。`;
+  }
+
+  const foundShown = found.slice(0, 6);
+  const foundText = foundShown.length > 0 ? `（已识别 ${foundShown.join('、')}）` : '';
+  return `SHX 字体诊断：未发现缺失 SHX 字体${foundText}，当前降级更可能由轮廓匹配失败导致。`;
+}
+
 function getEntityPropertySections(entity: Record<string, unknown>): PropertySection[] {
   const generalRows: PropertyRow[] = [];
   const geometryRows: PropertyRow[] = [];
@@ -218,6 +528,11 @@ function getEntityPropertySections(entity: Record<string, unknown>): PropertySec
   styleRows.push({ key: '色号(ACI)', value: String(colorIndex) });
   styleRows.push({ key: '线型', value: linetype });
   styleRows.push({ key: '线宽', value: lineweight });
+  const effectiveLineweightMm = toPositiveFiniteNumber(style.effective_lineweight_mm);
+  if (effectiveLineweightMm) styleRows.push({ key: '有效线宽(mm)', value: formatNumber(effectiveLineweightMm, 3) });
+  if (style.effective_lineweight_source !== undefined) {
+    styleRows.push({ key: '线宽来源', value: String(style.effective_lineweight_source) });
+  }
   if (style.effective_color_source !== undefined) {
     styleRows.push({ key: '颜色来源', value: String(style.effective_color_source) });
   }
@@ -255,7 +570,15 @@ function getEntityPropertySections(entity: Record<string, unknown>): PropertySec
   } else if (type === 'POLYLINE' || type === 'SPLINE') {
     const pts = Array.isArray(geom.vertices) ? geom.vertices : Array.isArray(geom.points) ? geom.points : [];
     geometryRows.push({ key: '顶点数', value: String(pts.length) });
-    if (type === 'POLYLINE') geometryRows.push({ key: '闭合', value: boolToCn(geom.closed) });
+    if (type === 'POLYLINE') {
+      geometryRows.push({ key: '闭合', value: boolToCn(geom.closed) });
+      const startW = toPositiveFiniteNumber(geom.start_width);
+      const endW = toPositiveFiniteNumber(geom.end_width);
+      const globalW = toPositiveFiniteNumber(geom.global_width);
+      if (globalW) geometryRows.push({ key: '几何线宽', value: `${formatNumber(globalW, 3)}` });
+      if (startW) geometryRows.push({ key: '起始宽度', value: formatNumber(startW, 3) });
+      if (endW) geometryRows.push({ key: '终止宽度', value: formatNumber(endW, 3) });
+    }
   } else if (type === 'CIRCLE') {
     const c = formatPointCompact(geom.center);
     if (c) geometryRows.push({ key: '中心点', value: c });
@@ -470,6 +793,153 @@ function entityColor(entity: DwgEntityLite): string {
   }
   if (/^foreground$/i.test(colorName)) return colorFromAci(7);
   return '#94a3b8';
+}
+
+function toPositiveFiniteNumber(value: unknown): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+function parseCadLineweightMm(raw: unknown): number | null {
+  const token = String(raw ?? '').trim();
+  if (!token) return null;
+  const lower = token.toLowerCase();
+  if (
+    lower === 'default' ||
+    lower === 'bylayer' ||
+    lower === 'byblock' ||
+    lower === 'klnwtbylayer' ||
+    lower === 'klnwtbyblock' ||
+    lower === 'klnwtbylwdefault'
+  ) {
+    return null;
+  }
+  const enumMatch = lower.match(/^klnwt(\d+)$/);
+  if (enumMatch) {
+    const centiMm = Number(enumMatch[1]);
+    if (Number.isFinite(centiMm) && centiMm > 0) return centiMm / 100;
+    return null;
+  }
+  const n = Number(token);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+function resolveEntityNormalLineweightMm(entity: DwgEntityLite): number {
+  const style = (entity.style || {}) as Record<string, unknown>;
+  const effective = toPositiveFiniteNumber(style.effective_lineweight_mm);
+  if (effective) return effective;
+  const parsed = parseCadLineweightMm(style.lineweight);
+  if (parsed) return parsed;
+  const mm = toPositiveFiniteNumber(style.lineweight_mm);
+  if (mm) return mm;
+  return DEFAULT_NORMAL_LINEWEIGHT_MM;
+}
+
+function resolvePolylineGeometricWidthWorld(
+  entity: DwgEntityLite,
+  primitive?: Extract<DwgPrimitive, { kind: 'polyline' }>
+): number | null {
+  const geom = (entity.geom || {}) as Record<string, unknown>;
+  const globalW = toPositiveFiniteNumber(primitive?.global_width ?? geom.global_width);
+  if (globalW) return globalW;
+  const startW = toPositiveFiniteNumber(primitive?.start_width ?? geom.start_width);
+  const endW = toPositiveFiniteNumber(primitive?.end_width ?? geom.end_width);
+  if (startW && endW) return Math.max(startW, endW);
+  return startW ?? endW ?? null;
+}
+
+function resolveStrokeWidthPx(
+  entity: DwgEntityLite,
+  zoom: number,
+  showNormalLineweight: boolean,
+  primitive?: DwgPrimitive
+): number {
+  const entityType = String(entity.type || '').toUpperCase();
+  const polylinePrimitive = primitive && primitive.kind === 'polyline' ? primitive : undefined;
+  if (entityType === 'POLYLINE' || polylinePrimitive) {
+    const worldW = resolvePolylineGeometricWidthWorld(entity, polylinePrimitive);
+    if (worldW && Number.isFinite(zoom) && zoom > 0) {
+      const px = worldW * zoom;
+      if (Number.isFinite(px) && px > 0) {
+        return Math.max(GEOMETRIC_LINEWEIGHT_MIN_PX, Math.min(GEOMETRIC_LINEWEIGHT_MAX_PX, px));
+      }
+    }
+  }
+  if (!showNormalLineweight) return 1.1;
+  const mm = resolveEntityNormalLineweightMm(entity);
+  const px = mm * NORMAL_LINEWEIGHT_MM_TO_PX;
+  if (!Number.isFinite(px) || px <= 0) return 1.1;
+  return Math.max(NORMAL_LINEWEIGHT_MIN_PX, Math.min(NORMAL_LINEWEIGHT_MAX_PX, px));
+}
+
+function hatchPatternIsCross(patternNameRaw: unknown): boolean {
+  const name = String(patternNameRaw || '').trim().toLowerCase();
+  if (!name) return false;
+  return (
+    name.includes('cross') ||
+    name.includes('grid') ||
+    name.includes('net') ||
+    name.includes('ansi32') ||
+    name.includes('ansi33') ||
+    name.includes('ansi34') ||
+    name.includes('ansi35')
+  );
+}
+
+function traceClosedScreenRingsPath(ctx: CanvasRenderingContext2D, rings: Array<Array<{ x: number; y: number }>>): boolean {
+  let traced = false;
+  for (const ring of rings) {
+    if (!Array.isArray(ring) || ring.length < 3) continue;
+    const first = ring[0];
+    if (!Number.isFinite(first.x) || !Number.isFinite(first.y)) continue;
+    ctx.moveTo(first.x, first.y);
+    for (let i = 1; i < ring.length; i += 1) {
+      const p = ring[i];
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+      ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+    traced = true;
+  }
+  return traced;
+}
+
+function drawHatchPatternLinesInClip(
+  ctx: CanvasRenderingContext2D,
+  bounds: { minX: number; minY: number; maxX: number; maxY: number },
+  color: string,
+  angleDeg: number,
+  spacingPx: number,
+  cross: boolean
+): void {
+  const w = Math.max(1, bounds.maxX - bounds.minX);
+  const h = Math.max(1, bounds.maxY - bounds.minY);
+  const cx = (bounds.minX + bounds.maxX) * 0.5;
+  const cy = (bounds.minY + bounds.maxY) * 0.5;
+  const radius = Math.hypot(w, h) * 0.6 + spacingPx * 2;
+  const drawOneDirection = (deg: number) => {
+    const rad = (deg * Math.PI) / 180;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rad);
+    ctx.beginPath();
+    for (let x = -radius; x <= radius; x += spacingPx) {
+      ctx.moveTo(x, -radius);
+      ctx.lineTo(x, radius);
+    }
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.62;
+  ctx.lineWidth = 1;
+  drawOneDirection(angleDeg);
+  if (cross) drawOneDirection(angleDeg + 90);
+  ctx.restore();
 }
 
 function bboxVisible(bbox: DwgEntityLite['bbox'], view: WorldBounds): boolean {
@@ -1024,7 +1494,9 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
   const [spaces, setSpaces] = useState<DwgSpace[]>([]);
   const [activeSpace, setActiveSpace] = useState<string>('model');
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [warningsExpanded, setWarningsExpanded] = useState(false);
   const [backendMode, setBackendMode] = useState<string>('unknown');
+  const [shxRenderStatus, setShxRenderStatus] = useState<ShxRenderStatus>(DEFAULT_SHX_RENDER_STATUS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ViewerMode>('select');
@@ -1048,6 +1520,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
   const [layerWhitelist, setLayerWhitelist] = useState<Set<string>>(new Set());
   const [snapCandidatePoint, setSnapCandidatePoint] = useState<WorldPoint | null>(null);
   const [snapCandidateMode, setSnapCandidateMode] = useState<string | null>(null);
+  const [showNormalLineweight, setShowNormalLineweight] = useState(true);
   const [showTreeSidebar, setShowTreeSidebar] = useState(true);
   const [showPropertySidebar, setShowPropertySidebar] = useState(true);
   const [hierarchyNodes, setHierarchyNodes] = useState<DwgHierarchyNode[]>([]);
@@ -1359,6 +1832,8 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
       setExpandedHierarchyNodeIds(new Set());
       setSelectedHierarchyNodeIds(new Set());
       setHierarchyError(null);
+      setWarnings([]);
+      setShxRenderStatus(DEFAULT_SHX_RENDER_STATUS);
       if (!rawFile) {
         lastOpenedFileKeyRef.current = null;
         setDocId(null);
@@ -1374,7 +1849,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
       }
       if (!rawFile.name.toLowerCase().endsWith('.dwg')) {
         lastOpenedFileKeyRef.current = null;
-        setError('Current file is not a DWG document.');
+        setError('当前文件不是 DWG 图纸。');
         setDocId(null);
         setSpaces([]);
         setEntities([]);
@@ -1395,10 +1870,31 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
       try {
         const opened = await openDwgDocument(rawFile);
         if (cancelled) return;
+        const shxStatus = resolveShxRenderStatus(opened);
+        const openWarnings = Array.isArray(opened.warnings) ? [...opened.warnings] : [];
+        if (shxStatus.detected && !shxStatus.trueOutline) {
+          const fallbackCountText = shxStatus.fallbackTextCount > 0 ? `，降级文字 ${shxStatus.fallbackTextCount} 条` : '';
+          let reason = '';
+          if (shxStatus.outlineMode === 'disabled') {
+            reason = '（后端未启用 SHX 轮廓）';
+          } else if (!shxStatus.vectorizeAvailable) {
+            reason = '（未检测到 OdVectorizeEx）';
+          } else if (shxStatus.vectorizeAttempted && shxStatus.vectorizeAttachedCount <= 0) {
+            reason = '（OdVectorizeEx 未返回可附加轮廓）';
+          } else if (shxStatus.outlineMode === 'stub') {
+            reason = '（当前为 stub 模式）';
+          }
+          const degradedWarning = `检测到 SHX 字体，当前为降级文本渲染${fallbackCountText}${reason}`;
+          if (!openWarnings.includes(degradedWarning)) {
+            openWarnings.push(degradedWarning);
+          }
+        }
+
         setDocId(opened.doc_id);
         setSpaces(opened.spaces || []);
         setActiveSpace(opened.current_space || 'model');
-        setWarnings(opened.warnings || []);
+        setWarnings(normalizeWarningsForUi(openWarnings));
+        setShxRenderStatus(shxStatus);
         const rev = String(opened.parser_revision || '').trim();
         setBackendMode(rev ? `${opened.mode || 'unknown'} (${rev})` : opened.mode || 'unknown');
         await loadSpaceEntitiesRef.current(opened.doc_id, opened.current_space || 'model', true);
@@ -1406,12 +1902,12 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         lastOpenedFileKeyRef.current = incomingFileKey;
       } catch (e) {
         if (cancelled) return;
-        const message = e instanceof Error ? e.message : 'Failed to open DWG document.';
+        const message = e instanceof Error ? e.message : '打开 DWG 图纸失败。';
         lastOpenedFileKeyRef.current = null;
         if (message.includes('only .dwg is supported for direct open')) {
-          setError(`${message} (If filename contains Chinese/special characters, backend filename sanitizer may affect suffix check.)`);
+          setError(`${translateDwgWarningToCn(message)}（如文件名包含中文或特殊字符，后端文件名清洗可能影响后缀识别）`);
         } else {
-          setError(message);
+          setError(translateDwgWarningToCn(message));
         }
         setDocId(null);
         setSpaces([]);
@@ -1427,6 +1923,8 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         setLayerWhitelist(new Set());
         setSnapCandidatePoint(null);
         setSnapCandidateMode(null);
+        setWarnings([]);
+        setShxRenderStatus(DEFAULT_SHX_RENDER_STATUS);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -1459,6 +1957,32 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         if (cancelled) return;
         const fonts = Array.isArray(res.fonts) ? res.fonts : [];
         setDocFonts(fonts);
+        const fontWarnings = Array.isArray(res.warnings) ? res.warnings : [];
+        if (fontWarnings.length > 0) {
+          setWarnings((prev) => normalizeWarningsForUi([...prev, ...fontWarnings]));
+        }
+        const shxDiag = res.shx_diagnostics;
+        const hasShxFonts = fonts.some((f) => String(f.kind || '').trim().toLowerCase() === 'shx');
+        if (shxDiag || hasShxFonts) {
+          const missingOriginalShxFonts = toUniqueStringList(shxDiag?.missing_original_shx_fonts);
+          const resolvedOriginalShxFonts = toUniqueStringList(shxDiag?.resolved_original_shx_fonts);
+          const fallbackShxFile = String(shxDiag?.fallback_shx_file || '').trim() || null;
+          const fallbackHitCountRaw = Number(shxDiag?.fallback_hit_count);
+          const fallbackHitCount = Number.isFinite(fallbackHitCountRaw) ? Math.max(0, fallbackHitCountRaw) : 0;
+          setShxRenderStatus((prev) => {
+            const nextOutlineMode = String(res.shx_outline_mode || '').trim() || prev.outlineMode;
+            return {
+              ...prev,
+              detected: prev.detected || hasShxFonts,
+              outlineMode: nextOutlineMode,
+              missingOriginalShxFonts: missingOriginalShxFonts.length > 0 ? missingOriginalShxFonts : prev.missingOriginalShxFonts,
+              resolvedOriginalShxFonts: resolvedOriginalShxFonts.length > 0 ? resolvedOriginalShxFonts : prev.resolvedOriginalShxFonts,
+              fallbackShxFile: fallbackShxFile || prev.fallbackShxFile,
+              fallbackHitCount: Math.max(prev.fallbackHitCount, fallbackHitCount),
+              diagnosticsUnavailable: prev.diagnosticsUnavailable || Boolean(shxDiag?.diagnostics_unavailable),
+            };
+          });
+        }
 
         const next: Record<string, string> = {};
         for (const font of fonts) {
@@ -2089,7 +2613,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
   }, [selectedEntities, selectedEntity]);
 
   const selectedCadHandle = useMemo(() => {
-    if (selectedCount > 1) return `已选 ${selectedCount}`;
+    if (selectedCount > 1) return `已选${selectedCount}`;
     if (selectedEntities.length === 1) return extractCadHandleAndPath(selectedEntities[0]).handle;
     if (selectedEntity) return extractCadHandleAndPath(selectedEntity).handle;
     if (selectedEntityId) return extractCadHandleAndPath({ id: selectedEntityId }).handle;
@@ -2114,6 +2638,58 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
     const shx = docFonts.filter((f) => String(f.kind || '').toLowerCase() === 'shx').length;
     return { total, available, shx };
   }, [docFonts]);
+
+  const shxStatusBadge = useMemo(() => {
+    if (!shxRenderStatus.detected) return null;
+    if (shxRenderStatus.trueOutline) {
+      return {
+        label: 'SHX 真实轮廓',
+        className: 'border-emerald-600/40 bg-emerald-950/30 text-emerald-200',
+      };
+    }
+    return {
+      label: 'SHX 降级显示',
+      className: 'border-amber-600/40 bg-amber-950/30 text-amber-200',
+    };
+  }, [shxRenderStatus]);
+
+  const shxFontDiagnosticWarning = useMemo(
+    () => buildShxFontDiagnosticFromDocFonts(shxRenderStatus, docFonts),
+    [shxRenderStatus, docFonts]
+  );
+  const shxDebugMatch = useMemo(() => shxRenderStatus.debugMatch, [shxRenderStatus.debugMatch]);
+  const warningLines = useMemo<WarningLineItem[]>(() => {
+    const merged: WarningLineItem[] = warnings.map((text, index) => ({
+      id: `w-${index}-${text}`,
+      text,
+      kind: 'normal',
+    }));
+    if (shxFontDiagnosticWarning && !warnings.includes(shxFontDiagnosticWarning)) {
+      merged.push({
+        id: `shx-diagnostic-${shxFontDiagnosticWarning}`,
+        text: shxFontDiagnosticWarning,
+        kind: 'shx_diagnostic',
+      });
+    }
+    return merged;
+  }, [warnings, shxFontDiagnosticWarning]);
+  const canToggleWarnings = warningLines.length > 0;
+
+  const shxMissingOriginalFontNames = useMemo(() => {
+    if (shxRenderStatus.missingOriginalShxFonts.length > 0) return shxRenderStatus.missingOriginalShxFonts;
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const font of docFonts) {
+      if (String(font.kind || '').trim().toLowerCase() !== 'shx') continue;
+      if (!Boolean(font.fallback_shx_hit)) continue;
+      const label = String(font.name || font.style_name || font.key || '').trim() || '未命名SHX';
+      const key = label.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      names.push(label);
+    }
+    return names;
+  }, [shxRenderStatus.missingOriginalShxFonts, docFonts]);
 
   const selectionScopeLabel = useMemo(() => {
     if (selectionScope === 'entity') return activeBlockName ? `块内选择: ${activeBlockName}` : '块内选择';
@@ -2360,7 +2936,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         octx.textAlign = 'left';
         octx.textBaseline = 'top';
         octx.fillStyle = '#94a3b8';
-        octx.fillText('WCS origin off-screen: (0,0)', 12, 12);
+        octx.fillText('WCS 原点不在当前视图: (0,0)', 12, 12);
         octx.restore();
       }
 
@@ -2407,21 +2983,25 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         textMaskPadding?: number;
         subtype?: string;
         fontFamily?: string;
+        lightweightMode?: boolean;
       }) => {
         textDrawQueue.push(() => {
           const p = worldToScreen(options.anchor);
           if (![p.x, p.y].every(Number.isFinite)) return;
 
+          const lightweightMode = Boolean(options.lightweightMode);
           const projectedFontSize = options.actualHeight * zoom;
-          if (!Number.isFinite(projectedFontSize) || projectedFontSize <= 0.35) return;
+          const minProjectedFontSize = lightweightMode ? 1.1 : 0.35;
+          if (!Number.isFinite(projectedFontSize) || projectedFontSize <= minProjectedFontSize) return;
           const isDimensionText = String(options.subtype || '').toLowerCase() === 'dimension_text';
-          let fontSize = Math.min(256, projectedFontSize);
-          if (isDimensionText) {
+          let fontSize = Math.min(lightweightMode ? 112 : 256, projectedFontSize);
+          if (isDimensionText && !lightweightMode) {
             // Keep dimension annotations readable at far zoom-out without affecting normal CAD TEXT.
             fontSize = Math.max(5.5, Math.min(56, fontSize));
           }
           const shear = Math.tan((options.oblique * Math.PI) / 180);
-          const lines = options.text.split('\n').filter((l) => l.length > 0);
+          const rawLines = options.text.split('\n').filter((l) => l.length > 0);
+          const lines = lightweightMode ? rawLines.slice(0, 4).map((line) => truncateCadLine(line, 42)) : rawLines;
           if (!lines.length) return;
 
           tctx.save();
@@ -2437,7 +3017,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
           tctx.textBaseline = options.baseline;
           const lineGap = fontSize * (options.isMText ? 1.22 : 1.0);
 
-          if (options.textMask) {
+          if (options.textMask && !lightweightMode) {
             const padScale = Number(options.textMaskPadding);
             const pad = Math.max(1.5, fontSize * (Number.isFinite(padScale) ? padScale : 0.2));
             const maskCorner = Math.max(1.5, Math.min(8, fontSize * 0.26));
@@ -2473,7 +3053,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
 
           lines.forEach((line, i) => {
             const y = i * lineGap;
-            if (fontSize >= 2.2) tctx.strokeText(line, 0, y);
+            if (!lightweightMode && fontSize >= 2.2) tctx.strokeText(line, 0, y);
             tctx.fillText(line, 0, y);
           });
           tctx.restore();
@@ -2484,6 +3064,8 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         if (!bboxVisible(entity.bbox, worldViewBounds)) continue;
         const geom = (entity.geom || {}) as Record<string, any>;
         const type = String(entity.type || '').toUpperCase();
+        const strokeColor = entityColor(entity);
+        const entityBaseStrokeWidth = resolveStrokeWidthPx(entity, zoom, showNormalLineweight);
 
         if (type === 'TEXT') {
           const pos = geom.position;
@@ -2502,11 +3084,12 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
           const oblique = Number(geom.oblique || 0);
           const mirroredX = Boolean(geom.mirrored_x);
           const mirroredY = Boolean(geom.mirrored_y);
+          const textFontKind = firstNonEmptyString([String(geom.font_kind ?? '')]);
           const cadFontFamily = resolveCadTextFontFamily(geom.font_key, geom.font_family, geom.font_name);
           queueTextDraw({
             text,
             anchor,
-            color: entityColor(entity),
+            color: strokeColor,
             rotation,
             actualHeight,
             widthFactor,
@@ -2518,13 +3101,16 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
             isMText: Boolean(geom.is_mtext),
             subtype: String(geom.subtype || ''),
             fontFamily: cadFontFamily,
+            lightweightMode: isShxFallbackText(shxRenderStatus, textFontKind),
           });
           continue;
         }
 
-        gctx.strokeStyle = entityColor(entity);
+        gctx.strokeStyle = strokeColor;
         gctx.fillStyle = 'transparent';
-        gctx.lineWidth = 1.1;
+        gctx.lineWidth = entityBaseStrokeWidth;
+        gctx.lineCap = 'round';
+        gctx.lineJoin = 'round';
 
         if (type === 'POINT') {
           const pos = geom.position;
@@ -2533,7 +3119,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
           const markerPx = Math.max(2, Math.min(8, Number(geom.display_size || 6)));
           gctx.beginPath();
           gctx.arc(p.x, p.y, markerPx * 0.35, 0, Math.PI * 2);
-          gctx.fillStyle = entityColor(entity);
+          gctx.fillStyle = strokeColor;
           gctx.fill();
           gctx.beginPath();
           gctx.moveTo(p.x - markerPx, p.y);
@@ -2575,25 +3161,76 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         if (type === 'HATCH') {
           const loops = Array.isArray(geom.loops) ? geom.loops : [];
           const hasSolidFill = Boolean(geom.solid_fill);
+          const patternName = String(geom.pattern_name || 'SOLID');
+          const patternAngle = Number(geom.pattern_angle);
+          const patternScale = Number(geom.pattern_scale);
+          const patternSpacing = Number(geom.pattern_spacing);
+          const rings: Array<Array<{ x: number; y: number }>> = [];
+          let minX = Number.POSITIVE_INFINITY;
+          let minY = Number.POSITIVE_INFINITY;
+          let maxX = Number.NEGATIVE_INFINITY;
+          let maxY = Number.NEGATIVE_INFINITY;
           for (const loop of loops) {
             const points = Array.isArray(loop?.points) ? loop.points : [];
             const screenPts = points
               .filter((p: unknown): p is WorldPoint => isPoint(p))
-              .map((p: WorldPoint) => worldToScreen(p));
+              .map((p: WorldPoint) => worldToScreen(p))
+              .filter((p: { x: number; y: number }) => Number.isFinite(p.x) && Number.isFinite(p.y));
             if (screenPts.length < 3) continue;
-            gctx.beginPath();
-            gctx.moveTo(screenPts[0].x, screenPts[0].y);
-            for (let i = 1; i < screenPts.length; i += 1) gctx.lineTo(screenPts[i].x, screenPts[i].y);
-            gctx.closePath();
-            if (hasSolidFill) {
-              gctx.save();
-              gctx.fillStyle = entityColor(entity);
-              gctx.globalAlpha = 0.08;
-              gctx.fill();
-              gctx.restore();
+            rings.push(screenPts);
+            for (const p of screenPts) {
+              minX = Math.min(minX, p.x);
+              minY = Math.min(minY, p.y);
+              maxX = Math.max(maxX, p.x);
+              maxY = Math.max(maxY, p.y);
             }
-            gctx.stroke();
           }
+          if (!rings.length) continue;
+
+          const patternNameLower = patternName.trim().toLowerCase();
+          const patternEnabled = patternNameLower && patternNameLower !== 'solid';
+          const hatchStrokeWidth = Math.max(0.7, Math.min(3.2, entityBaseStrokeWidth));
+          gctx.lineWidth = hatchStrokeWidth;
+
+          gctx.save();
+          gctx.beginPath();
+          const traced = traceClosedScreenRingsPath(gctx, rings);
+          if (traced && hasSolidFill) {
+            gctx.fillStyle = strokeColor;
+            gctx.globalAlpha = 0.2;
+            gctx.fill('evenodd');
+          }
+          gctx.restore();
+
+          if (traced && patternEnabled && Number.isFinite(minX) && Number.isFinite(minY) && Number.isFinite(maxX) && Number.isFinite(maxY)) {
+            const scale = Number.isFinite(patternScale) && patternScale > 0 ? patternScale : 1;
+            const worldSpacing = Number.isFinite(patternSpacing) && patternSpacing > 0 ? patternSpacing : 8;
+            const spacingPx = Math.max(4, Math.min(64, worldSpacing * scale * zoom));
+            const angleDeg = Number.isFinite(patternAngle) ? patternAngle : 45;
+            const cross = hatchPatternIsCross(patternName);
+
+            gctx.save();
+            gctx.beginPath();
+            traceClosedScreenRingsPath(gctx, rings);
+            gctx.clip('evenodd');
+            drawHatchPatternLinesInClip(
+              gctx,
+              { minX, minY, maxX, maxY },
+              strokeColor,
+              angleDeg,
+              spacingPx,
+              cross
+            );
+            gctx.restore();
+          }
+
+          gctx.beginPath();
+          for (const ring of rings) {
+            gctx.moveTo(ring[0].x, ring[0].y);
+            for (let i = 1; i < ring.length; i += 1) gctx.lineTo(ring[i].x, ring[i].y);
+            gctx.closePath();
+          }
+          gctx.stroke();
           continue;
         }
 
@@ -2719,6 +3356,9 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         const primitives = asPrimitiveList(geom as Record<string, unknown>);
         if (!primitives.length) continue;
         for (const primitive of primitives) {
+          const primitiveStrokeWidth = resolveStrokeWidthPx(entity, zoom, showNormalLineweight, primitive);
+          gctx.strokeStyle = strokeColor;
+          gctx.lineWidth = primitiveStrokeWidth;
           if (primitive.kind === 'line') {
             if (!isPoint(primitive.start) || !isPoint(primitive.end)) continue;
             const s = worldToScreen(primitive.start);
@@ -2795,14 +3435,15 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
                     gctx.lineTo(b1.x, b1.y);
                     gctx.lineTo(b2.x, b2.y);
                     gctx.closePath();
-                    gctx.fillStyle = entityColor(entity);
+                    gctx.fillStyle = strokeColor;
+                    gctx.lineWidth = Math.max(0.8, primitiveStrokeWidth);
                     gctx.globalAlpha = 1;
                     gctx.fill();
                     gctx.restore();
                   }
                 } else {
                   gctx.save();
-                  gctx.fillStyle = entityColor(entity);
+                  gctx.fillStyle = strokeColor;
                   gctx.globalAlpha = 1;
                   gctx.fill();
                   gctx.restore();
@@ -2812,8 +3453,8 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
               }
               if (primitive.filled) {
                 gctx.save();
-                gctx.fillStyle = entityColor(entity);
-                gctx.globalAlpha = 0.08;
+                gctx.fillStyle = strokeColor;
+                gctx.globalAlpha = 0.18;
                 gctx.fill();
                 gctx.restore();
               }
@@ -2833,11 +3474,12 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
             const oblique = Number(primitive.oblique || 0);
             const mirroredX = Boolean(primitive.mirrored_x);
             const mirroredY = Boolean(primitive.mirrored_y);
+            const textFontKind = firstNonEmptyString([String(primitive.font_kind ?? ''), String(geom.font_kind ?? '')]);
             const cadFontFamily = resolveCadTextFontFamily(primitive.font_key, primitive.font_family, primitive.font_name);
             queueTextDraw({
               text,
               anchor: pos,
-              color: entityColor(entity),
+              color: strokeColor,
               rotation: Number(primitive.rotation || 0),
               actualHeight,
               widthFactor,
@@ -2851,6 +3493,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
               textMaskPadding: Number(primitive.text_mask_padding),
               subtype: String(primitive.subtype || ''),
               fontFamily: cadFontFamily,
+              lightweightMode: isShxFallbackText(shxRenderStatus, textFontKind),
             });
             continue;
           }
@@ -2860,7 +3503,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
             const markerPx = Math.max(2, Math.min(8, Number(primitive.display_size || 6)));
             gctx.beginPath();
             gctx.arc(p.x, p.y, markerPx * 0.35, 0, Math.PI * 2);
-            gctx.fillStyle = entityColor(entity);
+            gctx.fillStyle = strokeColor;
             gctx.fill();
             gctx.beginPath();
             gctx.moveTo(p.x - markerPx, p.y);
@@ -2999,6 +3642,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
     worldToScreen,
     worldViewBounds,
     zoom,
+    showNormalLineweight,
     mode,
     snapEnabled,
     snapCandidatePoint,
@@ -3008,6 +3652,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
     cursorScreen,
     isPanning,
     resolveCadTextFontFamily,
+    shxRenderStatus,
   ]);
 
   return (
@@ -3017,6 +3662,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
           <span className="text-sm font-medium text-gray-200">CAD 查看器</span>
           {fileName && <span className="text-xs text-gray-500">{fileName}</span>}
           <span className="text-xs text-blue-300">模式: {backendMode}</span>
+          {shxStatusBadge && <span className={`rounded border px-1.5 py-0.5 text-[11px] ${shxStatusBadge.className}`}>{shxStatusBadge.label}</span>}
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -3080,6 +3726,15 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
           >
             {showPropertySidebar ? '隐藏属性' : '属性栏'}
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`h-8 ${showNormalLineweight ? 'text-cyan-300' : 'text-gray-300'}`}
+            onClick={() => setShowNormalLineweight((v) => !v)}
+            title={showNormalLineweight ? '已开启普通线宽(固定像素)' : '已关闭普通线宽(固定像素)'}
+          >
+            {showNormalLineweight ? '普通线宽:开' : '普通线宽:关'}
+          </Button>
         </div>
       </div>
 
@@ -3098,7 +3753,8 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
           ))}
         </select>
         <span className="text-xs text-gray-500 ml-2">缩放 {zoom.toFixed(4)}x</span>
-        <span className="text-xs text-gray-500 ml-2">左键按拾取框选择 | 中键拖拽平移 | 中键双击全图</span>
+        <span className="text-xs text-gray-500 ml-2">线宽模式: {showNormalLineweight ? 'CAD线宽(固定像素)' : '统一细线'}</span>
+        <span className="text-xs text-gray-500 ml-2">左键点击拾取/框选 | 中键拖拽平移 | 中键双击全图</span>
         {cursorWorld && (
           <span className="text-xs text-gray-500 ml-2">
             光标 ({formatNumber(cursorWorld.x, 2)}, {formatNumber(cursorWorld.y, 2)})
@@ -3108,19 +3764,28 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
           图元 {entities.length}
           {entityTotal > entities.length ? ` / ${entityTotal}` : ''}
         </span>
-        <span className="text-xs text-gray-500 ml-2">已选 {selectedCount}</span>
+        <span className="text-xs text-gray-500 ml-2">已选{selectedCount}</span>
         {boxSelectPreview && (
           <span className="text-xs text-cyan-300 ml-2">
-            框选 {boxSelectPreview.windowMode ? '窗口' : '交叉'} / {boxSelectModifierLabel} / 候选 {boxSelectPreview.count}
+            框选{boxSelectPreview.windowMode ? '窗口' : '交叉'} / {boxSelectModifierLabel} / 候选{boxSelectPreview.count}
           </span>
         )}
         <span className="text-xs text-gray-500 ml-2">
-          树: 图元 {hierarchyEntityTotal} / 块 {hierarchyBlockTotal}
+          树: 图元 {hierarchyEntityTotal} / 块{hierarchyBlockTotal}
         </span>
         <span className="text-xs text-gray-500 ml-2">
           字体 {docFontSummary.available}/{docFontSummary.total}
           {docFontSummary.shx > 0 ? ` · SHX ${docFontSummary.shx}` : ''}
         </span>
+        {shxMissingOriginalFontNames.length > 0 && (
+          <span
+            className="text-xs text-amber-300 ml-2"
+            title={`未命中原始 SHX 字体：${shxMissingOriginalFontNames.join('、')}`}
+          >
+            未命中SHX {shxMissingOriginalFontNames.slice(0, 2).join('、')}
+            {shxMissingOriginalFontNames.length > 2 ? ` 等${shxMissingOriginalFontNames.length}项` : ''}
+          </span>
+        )}
         <span className="text-xs text-gray-500 ml-2">图层过滤: {filterSummaryLabel}</span>
         {mode === 'measure' && snapEnabled && (
           <span className="text-xs text-cyan-300 ml-2">
@@ -3143,7 +3808,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
             </div>
 
             <div className="px-3 py-1.5 border-b border-gray-800 text-[11px] text-gray-500">
-              图元 {hierarchyEntityTotal} · 块 {hierarchyBlockTotal}
+              图元 {hierarchyEntityTotal} · 块{hierarchyBlockTotal}
             </div>
 
             <div className="px-3 py-2 border-b border-gray-800 space-y-2">
@@ -3384,14 +4049,79 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         </aside>
       </div>
 
-      {warnings.length > 0 && (
+      {warningLines.length > 0 && (
         <div className="px-3 py-2 bg-amber-900/20 border-t border-amber-800 text-amber-300 text-xs">
           <div className="flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 mt-0.5" />
-            <div className="space-y-1">
-              {warnings.map((w, i) => (
-                <p key={`w-${i}`}>{w}</p>
-              ))}
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold text-amber-200">警告 {warningLines.length} 条</p>
+                {canToggleWarnings && (
+                  <button
+                    type="button"
+                    onClick={() => setWarningsExpanded((prev) => !prev)}
+                    className="shrink-0 rounded border border-amber-600/80 bg-amber-950/40 px-2 py-0.5 text-[11px] text-amber-100 hover:bg-amber-900/45"
+                  >
+                    {warningsExpanded ? '收起' : '展开'}
+                  </button>
+                )}
+              </div>
+              {warningsExpanded && shxDebugMatch && (
+                <details className="rounded border border-cyan-700/70 bg-slate-950/60 px-2 py-1.5 text-cyan-100">
+                  <summary className="cursor-pointer font-semibold text-cyan-200">SHX 匹配诊断（调试）</summary>
+                  <div className="mt-1.5 space-y-1 text-[11px] leading-5">
+                    <p>
+                      向量文本 {shxDebugMatch.vectorizeTextEntityCount} / 键{shxDebugMatch.vectorizeTextKeysCount} / 图元{' '}
+                      {shxDebugMatch.vectorizePrimitivesTotal}
+                      {shxDebugMatch.vectorizeCacheHit ? ' / 缓存命中' : ' / 实时解析'}
+                    </p>
+                    <p>
+                      候选实体{shxDebugMatch.attachCandidateEntityCount} / 匹配成功 {shxDebugMatch.matchedEntityCount} / 匹配失败{' '}
+                      {shxDebugMatch.unmatchedEntityCount}
+                    </p>
+                    <p>
+                      失败分类: 无轮廓{shxDebugMatch.noVectorizePayloadCount} · 键不一致{shxDebugMatch.keyMismatchCount} ·
+                      字体过滤 {shxDebugMatch.filteredByFontKindCount} · 优化后空 {shxDebugMatch.emptyAfterOptimizeCount}
+                    </p>
+                    {shxDebugMatch.vectorizeError && <p>向量化错误 {shxDebugMatch.vectorizeError}</p>}
+                    {shxDebugMatch.unmatchedKeySamples.length > 0 && (
+                      <p>未匹配实体键样本: {shxDebugMatch.unmatchedKeySamples.slice(0, 8).join('、')}</p>
+                    )}
+                    {shxDebugMatch.orphanVectorizeKeySamples.length > 0 && (
+                      <p>孤立向量键样本: {shxDebugMatch.orphanVectorizeKeySamples.slice(0, 8).join('、')}</p>
+                    )}
+                  </div>
+                </details>
+              )}
+              {warningsExpanded &&
+                warningLines.map((line) => {
+                const missingFont = parseMissingFontWarningForUi(line.text);
+                if (line.kind === 'shx_diagnostic' && !missingFont) {
+                  return (
+                    <div key={line.id} className="rounded border border-amber-600/70 bg-amber-950/45 px-2 py-1.5 text-amber-100">
+                      <p className="font-semibold text-amber-200">SHX 字体诊断</p>
+                      <p className="leading-5">{line.text}</p>
+                    </div>
+                  );
+                }
+                if (!missingFont) {
+                  return <p key={line.id}>{line.text}</p>;
+                }
+                return (
+                  <div key={line.id} className="rounded border border-amber-600/70 bg-amber-950/45 px-2 py-1.5 text-amber-100">
+                    <p className="font-semibold text-amber-200">{missingFont.title}</p>
+                    {missingFont.items.length > 0 ? (
+                      missingFont.items.map((item, idx) => (
+                        <p key={`${line.id}-item-${idx}`} className="leading-5">
+                          {item}
+                        </p>
+                      ))
+                    ) : (
+                      <p className="leading-5">{line.text}</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

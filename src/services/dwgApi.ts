@@ -19,6 +19,47 @@ export interface DwgOpenResponse {
   spaces: DwgSpace[];
   current_space: string;
   warnings: string[];
+  shx_outline_mode?: string;
+  shx_status?: {
+    detected: boolean;
+    outline_mode: 'none' | 'oda_vectorize' | 'stub' | 'disabled' | string;
+    true_outline: boolean;
+    vectorize_attempted: boolean;
+    vectorize_attached_count: number;
+    vectorize_error?: string | null;
+    fallback_text_count?: number;
+    vectorize_available?: boolean;
+    missing_original_shx_fonts?: string[];
+    resolved_original_shx_fonts?: string[];
+    fallback_shx_file?: string | null;
+    fallback_hit_count?: number;
+    diagnostics_unavailable?: boolean;
+    debug_match?: {
+      vectorize_text_entity_count?: number;
+      vectorize_text_keys_count?: number;
+      vectorize_primitives_total?: number;
+      shape_file_text_true_count?: number;
+      attach_candidate_entity_count?: number;
+      matched_entity_count?: number;
+      unmatched_entity_count?: number;
+      no_vectorize_payload_count?: number;
+      key_mismatch_count?: number;
+      filtered_by_font_kind_count?: number;
+      empty_after_optimize_count?: number;
+      filtered_non_shx_count?: number;
+      vectorize_cache_hit?: boolean;
+      vectorize_error?: string;
+      vectorize_text_key_samples?: string[];
+      unmatched_key_samples?: string[];
+      orphan_vectorize_key_samples?: string[];
+      key_mismatch_samples?: Array<{
+        entity_id?: string;
+        handle?: string;
+        instance_path?: string[];
+        candidate_keys?: string[];
+      }>;
+    };
+  };
 }
 
 export interface DwgPickResponse {
@@ -70,6 +111,8 @@ export interface DwgDocFont {
   file_name?: string | null;
   file_url?: string | null;
   reason?: string | null;
+  fallback_shx_hit?: boolean;
+  fallback_shx_file_name?: string | null;
 }
 
 export interface DwgPrimitivePoint {
@@ -79,8 +122,23 @@ export interface DwgPrimitivePoint {
 }
 
 export type DwgPrimitive =
-  | { kind: 'line'; start: DwgPrimitivePoint; end: DwgPrimitivePoint }
-  | { kind: 'polyline'; points: DwgPrimitivePoint[]; closed?: boolean }
+  | {
+      kind: 'line';
+      start: DwgPrimitivePoint;
+      end: DwgPrimitivePoint;
+      subtype?: string;
+      arrow_style?: string;
+      arrow_block?: string;
+    }
+  | {
+      kind: 'polyline';
+      points: DwgPrimitivePoint[];
+      closed?: boolean;
+      start_width?: number;
+      end_width?: number;
+      global_width?: number;
+      subtype?: string;
+    }
   | { kind: 'circle'; center: DwgPrimitivePoint; radius: number }
   | {
       kind: 'arc';
@@ -133,9 +191,14 @@ export type DwgPrimitive =
       rings: DwgPrimitivePoint[][];
       filled?: boolean;
       pattern_name?: string;
+      pattern_angle?: number;
+      pattern_scale?: number;
+      pattern_spacing?: number;
       wipeout?: boolean;
       arrow_fill?: boolean;
       subtype?: string;
+      arrow_style?: string;
+      arrow_block?: string;
     };
 
 export type DwgGeometry = Record<string, unknown> & {
@@ -253,6 +316,14 @@ export async function listDwgFonts(docId: string) {
     fonts: DwgDocFont[];
     count: number;
     warnings?: string[];
+    shx_outline_mode?: string;
+    shx_diagnostics?: {
+      missing_original_shx_fonts?: string[];
+      resolved_original_shx_fonts?: string[];
+      fallback_shx_file?: string | null;
+      fallback_hit_count?: number;
+      diagnostics_unavailable?: boolean;
+    };
   }>(`${API_BASE_URL}/dwg/${docId}/fonts`);
 }
 
