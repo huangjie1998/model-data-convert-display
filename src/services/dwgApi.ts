@@ -245,7 +245,23 @@ export interface DwgHierarchyNode {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        throw new Error('DWG API request timed out');
+      }
+      const msg = error.message.toLowerCase();
+      if (msg === 'failed to fetch' || msg.includes('networkerror') || msg.includes('network request failed')) {
+        throw new Error('Failed to reach DWG backend');
+      }
+      throw error;
+    }
+    throw new Error('Failed to reach DWG backend');
+  }
+
   const text = await response.text();
   let body: any = {};
   try {

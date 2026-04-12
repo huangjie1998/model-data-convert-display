@@ -812,7 +812,8 @@ class DwgServiceCore:
         self.mode = "stub"
 
         self.external_base_url = os.environ.get("DWG_CORE_BASE_URL", "").strip().rstrip("/")
-        self.external_timeout_sec = max(1.0, float(os.environ.get("DWG_CORE_TIMEOUT_SEC", "25")))
+        # HTTP proxy mode timeout (when using an external DWG core service).
+        self.external_timeout_sec = max(1.0, float(os.environ.get("DWG_CORE_TIMEOUT_SEC", "60")))
         self.external_auth_bearer = os.environ.get("DWG_CORE_AUTH_BEARER", "").strip()
         self.external_prefix = ""
 
@@ -820,7 +821,19 @@ class DwgServiceCore:
         if explicit_prefix and not explicit_prefix.startswith("/"):
             explicit_prefix = f"/{explicit_prefix}"
 
-        self.oda_timeout_sec = max(5.0, float(os.environ.get("DWG_ODA_TIMEOUT_SEC", "60")))
+        # ODA CLI operations (OdReadEx/OdVectorizeEx) can be slow on large drawings.
+        # Keep a longer default timeout to reduce false timeout failures in local usage.
+        self.oda_timeout_sec = max(120.0, float(os.environ.get("DWG_ODA_TIMEOUT_SEC", "420")))
+        self.oda_timeout_retry_enabled = os.environ.get("DWG_ODA_TIMEOUT_RETRY_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+        self.oda_timeout_retry_sec = max(
+            self.oda_timeout_sec,
+            float(os.environ.get("DWG_ODA_TIMEOUT_RETRY_SEC", "600")),
+        )
+        self.oda_large_file_mb = max(1.0, float(os.environ.get("DWG_ODA_LARGE_FILE_MB", "80")))
+        self.oda_large_file_timeout_sec = max(
+            self.oda_timeout_sec,
+            float(os.environ.get("DWG_ODA_LARGE_FILE_TIMEOUT_SEC", "420")),
+        )
         self.max_entities_per_space = max(500, int(os.environ.get("DWG_ODA_MAX_ENTITIES_PER_SPACE", "120000")))
         self.default_entity_api_limit = max(200, int(os.environ.get("DWG_ENTITY_API_DEFAULT_LIMIT", "6000")))
         self.default_lineweight_mm = max(0.01, float(os.environ.get("DWG_LINEWEIGHT_DEFAULT_MM", str(DEFAULT_LINEWEIGHT_MM))))
@@ -1105,20 +1118,59 @@ class DwgServiceCore:
 
         target_file = str(file_path.resolve())
         cmd = [str(exe_path), target_file, "DO"]
+        file_size_mb = 0.0
         try:
-            proc = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=self.oda_timeout_sec,
-                env=env,
-                cwd=exe_dir,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise ExternalCoreError(f"OdReadEx timed out after {self.oda_timeout_sec:.1f}s for {file_path.name}") from exc
-        except Exception as exc:
-            raise ExternalCoreError(f"failed to launch OdReadEx: {exc}") from exc
+            file_size_mb = file_path.stat().st_size / (1024.0 * 1024.0)
+        except Exception:
+            file_size_mb = 0.0
+
+        base_timeout = self.oda_timeout_sec
+        if file_size_mb >= self.oda_large_file_mb:
+            base_timeout = max(base_timeout, self.oda_large_file_timeout_sec)
+            if base_timeout > self.oda_timeout_sec:
+                logger.info(
+                    "OdReadEx large file timeout profile enabled: %.1fMB >= %.1fMB, timeout %.1fs -> %.1fs",
+                    file_size_mb,
+                    self.oda_large_file_mb,
+                    self.oda_timeout_sec,
+                    base_timeout,
+                )
+
+        attempt_timeouts: List[float] = [base_timeout]
+        if self.oda_timeout_retry_enabled and self.oda_timeout_retry_sec > base_timeout:
+            attempt_timeouts.append(self.oda_timeout_retry_sec)
+
+        proc: Optional[subprocess.CompletedProcess[bytes]] = None
+        for attempt_idx, timeout_sec in enumerate(attempt_timeouts):
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=timeout_sec,
+                    env=env,
+                    cwd=exe_dir,
+                    check=False,
+                )
+                break
+            except subprocess.TimeoutExpired as exc:
+                if attempt_idx < len(attempt_timeouts) - 1:
+                    logger.warning(
+                        "OdReadEx timed out after %.1fs for %s; retrying once with %.1fs",
+                        timeout_sec,
+                        file_path.name,
+                        attempt_timeouts[attempt_idx + 1],
+                    )
+                    continue
+                raise ExternalCoreError(
+                    f"OdReadEx timed out after {timeout_sec:.1f}s for {file_path.name}. "
+                    f"Try increasing DWG_ODA_TIMEOUT_SEC."
+                ) from exc
+            except Exception as exc:
+                raise ExternalCoreError(f"failed to launch OdReadEx: {exc}") from exc
+
+        if proc is None:
+            raise ExternalCoreError(f"OdReadEx failed to run for {file_path.name}")
 
         stdout_text = self._decode_oda_bytes(proc.stdout or b"")
         stderr_text = self._decode_oda_bytes(proc.stderr or b"")
@@ -4260,6 +4312,14 @@ class DwgServiceCore:
             "oda_version": self.oda_version,
             "oda_resolve_source": self.oda_resolve_source,
             "session_count": len(self.sessions),
+            "timeouts": {
+                "dwg_core_http_sec": self.external_timeout_sec,
+                "oda_cli_sec": self.oda_timeout_sec,
+                "oda_cli_retry_enabled": self.oda_timeout_retry_enabled,
+                "oda_cli_retry_sec": self.oda_timeout_retry_sec,
+                "oda_large_file_mb": self.oda_large_file_mb,
+                "oda_large_file_sec": self.oda_large_file_timeout_sec,
+            },
             "supports": {
                 "direct_dwg": True,
                 "spaces": True,

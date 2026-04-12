@@ -83,9 +83,15 @@ if "%BACKEND%"=="1" (
   set "ODA_VERSION=2026.03.25-v1"
   set "ODA_RUNTIME_ROOT=%~dp0server\vendor\oda\win-x64\%ODA_VERSION%"
   set "ODA_READ_EXE=%ODA_RUNTIME_ROOT%\bin\OdReadEx.exe"
+  set "DWG_CORE_TIMEOUT_SEC=60"
+  set "DWG_ODA_TIMEOUT_SEC=420"
+  set "DWG_ODA_TIMEOUT_RETRY_ENABLED=1"
+  set "DWG_ODA_TIMEOUT_RETRY_SEC=600"
+  set "DWG_ODA_LARGE_FILE_MB=80"
+  set "DWG_ODA_LARGE_FILE_TIMEOUT_SEC=420"
   set "PATH=%SKP_DLL_DIR%;%ODA_RUNTIME_ROOT%\bin;!PATH!"
 
-  start "backend-%BACKEND_PORT%" cmd /k "cd /d %~dp0server && call venv\Scripts\activate.bat && set SKP_DLL_DIR=%~dp0skp_converter_deploy && set ODA_VERSION=2026.03.25-v1 && set ODA_RUNTIME_ROOT=%~dp0server\vendor\oda\win-x64\%ODA_VERSION% && set ODA_READ_EXE=%ODA_RUNTIME_ROOT%\bin\OdReadEx.exe && set PATH=%SKP_DLL_DIR%;%ODA_RUNTIME_ROOT%\bin;%%PATH%% && python app.py"
+  start "backend-%BACKEND_PORT%" cmd /k "cd /d %~dp0server && call venv\Scripts\activate.bat && set SKP_DLL_DIR=%~dp0skp_converter_deploy && set ODA_VERSION=2026.03.25-v1 && set ODA_RUNTIME_ROOT=%~dp0server\vendor\oda\win-x64\%ODA_VERSION% && set ODA_READ_EXE=%ODA_RUNTIME_ROOT%\bin\OdReadEx.exe && set DWG_CORE_TIMEOUT_SEC=60 && set DWG_ODA_TIMEOUT_SEC=420 && set DWG_ODA_TIMEOUT_RETRY_ENABLED=1 && set DWG_ODA_TIMEOUT_RETRY_SEC=600 && set DWG_ODA_LARGE_FILE_MB=80 && set DWG_ODA_LARGE_FILE_TIMEOUT_SEC=420 && set PATH=%SKP_DLL_DIR%;%ODA_RUNTIME_ROOT%\bin;%%PATH%% && python app.py"
   cd /d "%~dp0"
 )
 

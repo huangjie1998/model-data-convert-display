@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, Crosshair, Hand, Layers, LocateFixed, Maximize, Ruler } from 'lucide-react';
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ChevronDown, ChevronRight, Crosshair, Eye, EyeOff, Hand, Layers, LocateFixed, Maximize, Ruler } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Button } from '@/components/ui/button';
 import {
   closeDwgDocument,
@@ -105,6 +106,117 @@ interface WarningLineItem {
   text: string;
   kind: 'normal' | 'shx_diagnostic';
 }
+
+interface FlatHierarchyRow {
+  node: DwgHierarchyNode;
+  depth: number;
+  hasChildren: boolean;
+  expanded: boolean;
+  isSelected: boolean;
+  visible: boolean;
+  rowInteractive: boolean;
+  rowLabel: string;
+}
+
+interface HierarchyVirtualRowProps {
+  row: FlatHierarchyRow;
+  virtualStart: number;
+  onToggleNode: (nodeId: string) => void;
+  onSelectNode: (node: DwgHierarchyNode) => void | Promise<void>;
+  onLocateNode: (node: DwgHierarchyNode) => void;
+  onToggleVisibility: (nodeId: string) => void;
+}
+
+const HierarchyVirtualRow = memo(
+  function HierarchyVirtualRow({
+    row,
+    virtualStart,
+    onToggleNode,
+    onSelectNode,
+    onLocateNode,
+    onToggleVisibility,
+  }: HierarchyVirtualRowProps) {
+    const node = row.node;
+    return (
+      <div className="absolute left-0 top-0 w-full" style={{ transform: `translateY(${virtualStart}px)` }}>
+        <div
+          className={`flex items-center gap-1 px-2 py-1 rounded ${row.rowInteractive ? 'cursor-pointer' : 'cursor-not-allowed'} ${
+            !row.visible ? 'opacity-45' : ''
+          } ${row.isSelected ? 'bg-cyan-900/35 text-cyan-100' : 'hover:bg-gray-800/70 text-gray-200'}`}
+          style={{ paddingLeft: `${8 + row.depth * 14}px` }}
+          onClick={() => {
+            if (node.node_kind === 'category') onToggleNode(node.node_id);
+            else if (row.rowInteractive) void onSelectNode(node);
+          }}
+          title={node.node_kind === 'category' ? `Category ${node.label}` : `${row.rowInteractive ? '' : 'Hidden or filtered '}Handle ${node.handle || '--'}`}
+        >
+          {row.hasChildren ? (
+            <button
+              type="button"
+              className="h-4 w-4 inline-flex items-center justify-center text-gray-400 hover:text-gray-200"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleNode(node.node_id);
+              }}
+            >
+              {row.expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            </button>
+          ) : (
+            <span className="inline-block h-4 w-4" />
+          )}
+
+          <span className={`truncate flex-1 ${node.node_kind === 'category' ? 'text-gray-300 font-medium' : ''}`}>{row.rowLabel}</span>
+
+          {node.node_kind !== 'category' && (
+            <span className="text-[10px] text-gray-500">{node.type || '--'}</span>
+          )}
+
+          {node.node_kind !== 'category' && node.bbox && (
+            <button
+              type="button"
+              className="h-5 w-5 inline-flex items-center justify-center text-emerald-300 hover:text-emerald-200"
+              title="Locate"
+              onClick={(e) => {
+                e.stopPropagation();
+                onLocateNode(node);
+              }}
+            >
+              <LocateFixed className="h-3.5 w-3.5" />
+            </button>
+          )}
+
+          <button
+            type="button"
+            className={`h-5 w-5 inline-flex items-center justify-center ${
+              row.visible ? 'text-cyan-300 hover:text-cyan-100' : 'text-gray-500 hover:text-gray-300'
+            }`}
+            title={row.visible ? 'Hide' : 'Show'}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleVisibility(node.node_id);
+            }}
+          >
+            {row.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+      </div>
+    );
+  },
+  (prev, next) =>
+    prev.virtualStart === next.virtualStart &&
+    prev.row.node.node_id === next.row.node.node_id &&
+    prev.row.depth === next.row.depth &&
+    prev.row.hasChildren === next.row.hasChildren &&
+    prev.row.expanded === next.row.expanded &&
+    prev.row.isSelected === next.row.isSelected &&
+    prev.row.visible === next.row.visible &&
+    prev.row.rowInteractive === next.row.rowInteractive &&
+    prev.row.rowLabel === next.row.rowLabel &&
+    prev.onToggleNode === next.onToggleNode &&
+    prev.onSelectNode === next.onSelectNode &&
+    prev.onLocateNode === next.onLocateNode &&
+    prev.onToggleVisibility === next.onToggleVisibility
+);
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
@@ -385,6 +497,11 @@ function translateDwgWarningToCn(raw: unknown): string {
   }
   if (/^Current file is not a DWG document\.?$/i.test(text)) {
     return '当前文件不是 DWG 图纸。';
+  }
+
+  const odReadTimeout = text.match(/^OdReadEx timed out after ([\d.]+)s for (.+?)(?:\.\s*Try increasing DWG_ODA_TIMEOUT_SEC\.?)?$/i);
+  if (odReadTimeout) {
+    return `OdReadEx 读取超时（${odReadTimeout[1]}s，${odReadTimeout[2]}）。请提高 DWG_ODA_TIMEOUT_SEC（建议 420 或更高）并重启后端。`;
   }
 
   return text;
@@ -1418,14 +1535,25 @@ function hierarchyChildren(node: DwgHierarchyNode): DwgHierarchyNode[] {
   return Array.isArray(node.children) ? node.children : [];
 }
 
-function findHierarchyPathByEntityId(nodes: DwgHierarchyNode[], entityId: string, path: string[] = []): string[] | null {
+function collectHierarchyEntityPathMap(nodes: DwgHierarchyNode[], out: Map<string, string[]>, path: string[] = []) {
   for (const node of nodes) {
-    const nextPath = [...path, node.node_id];
-    if (node.entity_id === entityId) return nextPath;
-    const childPath = findHierarchyPathByEntityId(hierarchyChildren(node), entityId, nextPath);
-    if (childPath) return childPath;
+    path.push(node.node_id);
+    const entityId = typeof node.entity_id === 'string' ? node.entity_id.trim() : '';
+    if (entityId && !out.has(entityId)) {
+      out.set(entityId, [...path]);
+    }
+    const children = hierarchyChildren(node);
+    if (children.length > 0) collectHierarchyEntityPathMap(children, out, path);
+    path.pop();
   }
-  return null;
+}
+
+function areStringSetsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) {
+    if (!b.has(v)) return false;
+  }
+  return true;
 }
 
 function collectFirstLayerExpandedNodeIds(nodes: DwgHierarchyNode[]): Set<string> {
@@ -1444,6 +1572,26 @@ function collectHierarchyLayers(nodes: DwgHierarchyNode[], out: Set<string>) {
     const children = hierarchyChildren(node);
     if (children.length > 0) collectHierarchyLayers(children, out);
   }
+}
+
+function collectHierarchyNodeMap(nodes: DwgHierarchyNode[], out: Map<string, DwgHierarchyNode>) {
+  for (const node of nodes) {
+    out.set(node.node_id, node);
+    const children = hierarchyChildren(node);
+    if (children.length > 0) collectHierarchyNodeMap(children, out);
+  }
+}
+
+function collectHierarchyEntityIdsFromNode(node: DwgHierarchyNode, out: Set<string>) {
+  const id = typeof node.entity_id === 'string' ? node.entity_id.trim() : '';
+  if (id) out.add(id);
+  const children = hierarchyChildren(node);
+  for (const child of children) collectHierarchyEntityIdsFromNode(child, out);
+}
+
+function getEntityRecordId(entity: Record<string, unknown>): string | null {
+  const id = String(entity.id ?? entity.entity_id ?? '').trim();
+  return id || null;
 }
 
 function entityWorldBounds(entity: DwgEntityLite): WorldBounds | null {
@@ -1518,6 +1666,8 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
   const [cursorScreen, setCursorScreen] = useState<{ x: number; y: number } | null>(null);
   const [layerFilterEnabled, setLayerFilterEnabled] = useState(false);
   const [layerWhitelist, setLayerWhitelist] = useState<Set<string>>(new Set());
+  const [hiddenLayerNames, setHiddenLayerNames] = useState<Set<string>>(new Set());
+  const [hiddenHierarchyNodeIds, setHiddenHierarchyNodeIds] = useState<Set<string>>(new Set());
   const [snapCandidatePoint, setSnapCandidatePoint] = useState<WorldPoint | null>(null);
   const [snapCandidateMode, setSnapCandidateMode] = useState<string | null>(null);
   const [showNormalLineweight, setShowNormalLineweight] = useState(true);
@@ -1528,7 +1678,8 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
   const [hierarchyBlockTotal, setHierarchyBlockTotal] = useState(0);
   const [hierarchyLoading, setHierarchyLoading] = useState(false);
   const [hierarchyError, setHierarchyError] = useState<string | null>(null);
-  const [expandedHierarchyNodeIds, setExpandedHierarchyNodeIds] = useState<Set<string>>(new Set());
+  const expandedHierarchyNodeIdsRef = useRef<Set<string>>(new Set());
+  const [expandedHierarchyVersion, setExpandedHierarchyVersion] = useState(0);
   const [selectedHierarchyNodeIds, setSelectedHierarchyNodeIds] = useState<Set<string>>(new Set());
   const [docFonts, setDocFonts] = useState<DwgDocFont[]>([]);
   const [fontFamilyByKey, setFontFamilyByKey] = useState<Record<string, string>>({});
@@ -1543,6 +1694,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
   const [boxSelectModifier, setBoxSelectModifier] = useState<BoxSelectModifier>('replace');
 
   const viewportRef = useRef<HTMLDivElement>(null);
+  const treeScrollRef = useRef<HTMLDivElement>(null);
   const geometryCanvasRef = useRef<HTMLCanvasElement>(null);
   const textCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -1589,12 +1741,52 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
     };
   }, [canvasMetrics.width, canvasMetrics.height, pan.x, pan.y, screenCenter.x, screenCenter.y, zoom]);
 
+  const replaceExpandedHierarchyNodeIds = useCallback((next: Set<string>) => {
+    expandedHierarchyNodeIdsRef.current = next;
+    setExpandedHierarchyVersion((prev) => prev + 1);
+  }, []);
+
+  const mutateExpandedHierarchyNodeIds = useCallback((mutator: (next: Set<string>) => boolean) => {
+    const next = expandedHierarchyNodeIdsRef.current;
+    if (!mutator(next)) return;
+    setExpandedHierarchyVersion((prev) => prev + 1);
+  }, []);
+
   const availableLayers = useMemo(() => {
     const out = new Set<string>();
     for (const ent of entities) out.add(normalizeLayerName(ent.layer));
     collectHierarchyLayers(hierarchyNodes, out);
     return Array.from(out).sort((a, b) => a.localeCompare(b, 'en-US'));
   }, [entities, hierarchyNodes]);
+
+  const entityById = useMemo(() => {
+    const out = new Map<string, DwgEntityLite>();
+    for (const ent of entities) out.set(ent.id, ent);
+    return out;
+  }, [entities]);
+
+  const hierarchyNodeById = useMemo(() => {
+    const out = new Map<string, DwgHierarchyNode>();
+    collectHierarchyNodeMap(hierarchyNodes, out);
+    return out;
+  }, [hierarchyNodes]);
+
+  const hierarchyEntityPathById = useMemo(() => {
+    const out = new Map<string, string[]>();
+    collectHierarchyEntityPathMap(hierarchyNodes, out);
+    return out;
+  }, [hierarchyNodes]);
+
+  const hiddenEntityIdsByTree = useMemo(() => {
+    if (hiddenHierarchyNodeIds.size === 0) return new Set<string>();
+    const out = new Set<string>();
+    for (const nodeId of hiddenHierarchyNodeIds) {
+      const node = hierarchyNodeById.get(nodeId);
+      if (!node) continue;
+      collectHierarchyEntityIdsFromNode(node, out);
+    }
+    return out;
+  }, [hiddenHierarchyNodeIds, hierarchyNodeById]);
 
   const isLayerSelectable = useCallback(
     (layerRaw: unknown) => {
@@ -1604,6 +1796,47 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
     },
     [layerFilterEnabled, layerWhitelist]
   );
+
+  const isEntityVisible = useCallback(
+    (layerRaw: unknown, entityIdRaw: unknown) => {
+      const layer = normalizeLayerName(layerRaw);
+      if (hiddenLayerNames.has(layer)) return false;
+      const entityId = String(entityIdRaw ?? '').trim();
+      if (!entityId) return true;
+      return !hiddenEntityIdsByTree.has(entityId);
+    },
+    [hiddenEntityIdsByTree, hiddenLayerNames]
+  );
+
+  const nodeVisibleMap = useMemo(() => {
+    const out = new Map<string, boolean>();
+    const visit = (node: DwgHierarchyNode): boolean => {
+      if (hiddenHierarchyNodeIds.has(node.node_id)) {
+        out.set(node.node_id, false);
+        return false;
+      }
+      if (node.node_kind === 'category') {
+        const children = hierarchyChildren(node);
+        if (children.length === 0) {
+          out.set(node.node_id, true);
+          return true;
+        }
+        const anyVisible = children.some((child) => visit(child));
+        out.set(node.node_id, anyVisible);
+        return anyVisible;
+      }
+      const visible = isEntityVisible(node.layer, node.entity_id);
+      out.set(node.node_id, visible);
+      return visible;
+    };
+
+    for (const root of hierarchyNodes) {
+      visit(root);
+    }
+    return out;
+  }, [hierarchyNodes, hiddenHierarchyNodeIds, isEntityVisible]);
+
+  const isNodeVisible = useCallback((node: DwgHierarchyNode): boolean => nodeVisibleMap.get(node.node_id) ?? true, [nodeVisibleMap]);
 
   const filterSummaryLabel = useMemo(() => {
     if (!layerFilterEnabled) return '不过滤';
@@ -1730,6 +1963,24 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
     });
   }, []);
 
+  const toggleLayerVisibility = useCallback((layer: string) => {
+    setHiddenLayerNames((prev) => {
+      const next = new Set(prev);
+      if (next.has(layer)) next.delete(layer);
+      else next.add(layer);
+      return next;
+    });
+  }, []);
+
+  const toggleHierarchyNodeVisibility = useCallback((nodeId: string) => {
+    setHiddenHierarchyNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  }, []);
+
   const focusWorldBounds = useCallback(
     (bounds: WorldBounds | null) => {
       if (!bounds || canvasMetrics.width <= 0 || canvasMetrics.height <= 0) return;
@@ -1766,17 +2017,17 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
       setHierarchyNodes(nodes);
       setHierarchyEntityTotal(typeof res.total_entity_count === 'number' ? res.total_entity_count : 0);
       setHierarchyBlockTotal(typeof res.total_block_ref_count === 'number' ? res.total_block_ref_count : 0);
-      setExpandedHierarchyNodeIds(collectFirstLayerExpandedNodeIds(nodes));
+      replaceExpandedHierarchyNodeIds(collectFirstLayerExpandedNodeIds(nodes));
     } catch (e) {
       setHierarchyNodes([]);
       setHierarchyEntityTotal(0);
       setHierarchyBlockTotal(0);
-      setExpandedHierarchyNodeIds(new Set());
+      replaceExpandedHierarchyNodeIds(new Set());
       setHierarchyError(e instanceof Error ? e.message : '元素树加载失败');
     } finally {
       setHierarchyLoading(false);
     }
-  }, []);
+  }, [replaceExpandedHierarchyNodeIds]);
 
   const loadSpaceEntitiesRef = useRef(loadSpaceEntities);
   useEffect(() => {
@@ -1803,6 +2054,31 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
   }, [availableLayers, layerFilterEnabled]);
 
   useEffect(() => {
+    setHiddenLayerNames((prev) => {
+      if (prev.size === 0) return prev;
+      const availableLayerSet = new Set(availableLayers);
+      const next = new Set<string>();
+      for (const layer of prev) {
+        if (availableLayerSet.has(layer)) next.add(layer);
+      }
+      if (next.size === prev.size) return prev;
+      return next;
+    });
+  }, [availableLayers]);
+
+  useEffect(() => {
+    setHiddenHierarchyNodeIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set<string>();
+      for (const nodeId of prev) {
+        if (hierarchyNodeById.has(nodeId)) next.add(nodeId);
+      }
+      if (next.size === prev.size) return prev;
+      return next;
+    });
+  }, [hierarchyNodeById]);
+
+  useEffect(() => {
     docIdRef.current = docId;
   }, [docId]);
 
@@ -1824,12 +2100,14 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
       setMeasureValue('');
       setLayerFilterEnabled(false);
       setLayerWhitelist(new Set());
+      setHiddenLayerNames(new Set());
+      setHiddenHierarchyNodeIds(new Set());
       setSnapCandidatePoint(null);
       setSnapCandidateMode(null);
       setHierarchyNodes([]);
       setHierarchyEntityTotal(0);
       setHierarchyBlockTotal(0);
-      setExpandedHierarchyNodeIds(new Set());
+      replaceExpandedHierarchyNodeIds(new Set());
       setSelectedHierarchyNodeIds(new Set());
       setHierarchyError(null);
       setWarnings([]);
@@ -1858,7 +2136,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         setHierarchyNodes([]);
         setHierarchyEntityTotal(0);
         setHierarchyBlockTotal(0);
-        setExpandedHierarchyNodeIds(new Set());
+        replaceExpandedHierarchyNodeIds(new Set());
         setSelectedHierarchyNodeIds(new Set());
         setLayerFilterEnabled(false);
         setLayerWhitelist(new Set());
@@ -1917,7 +2195,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         setHierarchyNodes([]);
         setHierarchyEntityTotal(0);
         setHierarchyBlockTotal(0);
-        setExpandedHierarchyNodeIds(new Set());
+        replaceExpandedHierarchyNodeIds(new Set());
         setSelectedHierarchyNodeIds(new Set());
         setLayerFilterEnabled(false);
         setLayerWhitelist(new Set());
@@ -2043,6 +2321,8 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
       setMeasureValue('');
       setLayerFilterEnabled(false);
       setLayerWhitelist(new Set());
+      setHiddenLayerNames(new Set());
+      setHiddenHierarchyNodeIds(new Set());
       setSnapCandidatePoint(null);
       setSnapCandidateMode(null);
       setSelectedHierarchyNodeIds(new Set());
@@ -2168,7 +2448,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
       };
       const windowMode = endScreen.x >= startScreen.x;
 
-      let scoped = entities.filter((ent) => isLayerSelectable(ent.layer));
+      let scoped = entities.filter((ent) => isLayerSelectable(ent.layer) && isEntityVisible(ent.layer, ent.id));
       if (selectionScope === 'entity' && activeBlockId) {
         scoped = scoped.filter((ent) => String(ent.parent_block_id || '') === activeBlockId);
       }
@@ -2208,6 +2488,9 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
           try {
             const detail = await getDwgEntity(docId, target.id);
             if (detail.entity && typeof detail.entity === 'object') {
+              if (!isEntityVisible((detail.entity as Record<string, unknown>).layer, getEntityRecordId(detail.entity))) {
+                continue;
+              }
               selectedIds.push(target.id);
               selectedRecords.push(detail.entity);
             }
@@ -2258,6 +2541,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
       screenToWorld,
       entities,
       isLayerSelectable,
+      isEntityVisible,
       selectionScope,
       activeBlockId,
       clearSelection,
@@ -2282,7 +2566,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
     };
     const windowMode = boxSelectCurrent.x >= boxSelectStart.x;
 
-    let scoped = entities.filter((ent) => isLayerSelectable(ent.layer));
+    let scoped = entities.filter((ent) => isLayerSelectable(ent.layer) && isEntityVisible(ent.layer, ent.id));
     if (selectionScope === 'entity' && activeBlockId) {
       scoped = scoped.filter((ent) => String(ent.parent_block_id || '') === activeBlockId);
     }
@@ -2310,6 +2594,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
     screenToWorld,
     entities,
     isLayerSelectable,
+    isEntityVisible,
     selectionScope,
     activeBlockId,
     boxSelectModifier,
@@ -2388,7 +2673,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
           } catch {
             // fall back to local cache
           }
-          const localEnt = entities.find((e) => e.id === entityId) || null;
+          const localEnt = entityById.get(entityId) || null;
           return localEnt ? (localEnt as unknown as Record<string, unknown>) : null;
         };
 
@@ -2406,7 +2691,13 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
             });
             const first = picked.picked?.[0];
             if (!first?.entity_id) continue;
-            pickedSourceEntityId = String(first.entity_id);
+            const candidateSourceEntityId = String(first.entity_id);
+            const localSourceEntity = entityById.get(candidateSourceEntityId);
+            if (localSourceEntity) {
+              if (!isLayerSelectable(localSourceEntity.layer)) continue;
+              if (!isEntityVisible(localSourceEntity.layer, localSourceEntity.id)) continue;
+            }
+            pickedSourceEntityId = candidateSourceEntityId;
             const parentId = typeof first.parent_block_id === 'string' ? first.parent_block_id.trim() : '';
             pickedSourceParentBlockId = parentId || null;
             break;
@@ -2427,6 +2718,10 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
             return;
           }
           if (!isLayerSelectable((sourceEntity as Record<string, unknown>).layer)) {
+            clearSelection();
+            return;
+          }
+          if (!isEntityVisible((sourceEntity as Record<string, unknown>).layer, getEntityRecordId(sourceEntity))) {
             clearSelection();
             return;
           }
@@ -2451,6 +2746,10 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
             return;
           }
           if (!isLayerSelectable((blockEntity as Record<string, unknown>).layer)) {
+            clearSelection();
+            return;
+          }
+          if (!isEntityVisible((blockEntity as Record<string, unknown>).layer, getEntityRecordId(blockEntity))) {
             clearSelection();
             return;
           }
@@ -2482,14 +2781,21 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
           });
           const first = picked.picked?.[0];
           if (first?.entity_id) {
-            pickedEntityId = first.entity_id;
+            const candidateEntityId = first.entity_id;
+            const localCandidate = entityById.get(candidateEntityId);
+            if (localCandidate) {
+              if (!isLayerSelectable(localCandidate.layer)) continue;
+              if (!isEntityVisible(localCandidate.layer, localCandidate.id)) continue;
+            }
+            pickedEntityId = candidateEntityId;
             break;
           }
         }
 
         if (!pickedEntityId) {
           const scopedEntities = entities.filter(
-            (ent) => String(ent.parent_block_id || '') === activeBlockId && isLayerSelectable(ent.layer)
+            (ent) =>
+              String(ent.parent_block_id || '') === activeBlockId && isLayerSelectable(ent.layer) && isEntityVisible(ent.layer, ent.id)
           );
           const localScopedId = findLocalPickEntityId(worldPoint, maxTolWorld, scopedEntities, worldViewBounds);
           if (localScopedId) {
@@ -2507,6 +2813,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         const entityRecord = await tryResolveEntity(pickedEntityId);
         if (!entityRecord) return;
         if (!isLayerSelectable((entityRecord as Record<string, unknown>).layer)) return;
+        if (!isEntityVisible((entityRecord as Record<string, unknown>).layer, getEntityRecordId(entityRecord))) return;
         if (!isEntityRecordHit(entityRecord, worldPoint, maxTolWorld, activeSpace)) return;
         applySelection([pickedEntityId], [entityRecord]);
       } catch (e) {
@@ -2524,6 +2831,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
       zoom,
       handleMeasure,
       entities,
+      entityById,
       worldViewBounds,
       selectionScope,
       activeBlockId,
@@ -2532,6 +2840,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
       clearSelection,
       applySelection,
       isLayerSelectable,
+      isEntityVisible,
     ]
   );
 
@@ -2697,13 +3006,14 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
   }, [activeBlockName, selectionScope]);
 
   const toggleHierarchyNode = useCallback((nodeId: string) => {
-    setExpandedHierarchyNodeIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) next.delete(nodeId);
-      else next.add(nodeId);
-      return next;
+    startTransition(() => {
+      mutateExpandedHierarchyNodeIds((next) => {
+        if (next.has(nodeId)) next.delete(nodeId);
+        else next.add(nodeId);
+        return true;
+      });
     });
-  }, []);
+  }, [mutateExpandedHierarchyNodeIds]);
 
   const handleHierarchyNodeSelect = useCallback(
     async (node: DwgHierarchyNode) => {
@@ -2712,11 +3022,12 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         return;
       }
       if (!isLayerSelectable(node.layer)) return;
+      if (!isNodeVisible(node)) return;
       const entityId = typeof node.entity_id === 'string' ? node.entity_id.trim() : '';
       if (!entityId || !docId) return;
 
       let detailRecord: Record<string, unknown> | null = null;
-      const localEnt = entities.find((e) => e.id === entityId) || null;
+      const localEnt = entityById.get(entityId) || null;
       if (localEnt) detailRecord = localEnt as unknown as Record<string, unknown>;
 
       try {
@@ -2726,9 +3037,10 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
         // ignore detail fetch errors, keep best local info
       }
       if (!detailRecord) return;
+      if (!isEntityVisible(detailRecord.layer, getEntityRecordId(detailRecord))) return;
       applySelection([entityId], [detailRecord]);
     },
-    [docId, entities, isLayerSelectable, toggleHierarchyNode, applySelection]
+    [docId, entityById, isLayerSelectable, isEntityVisible, isNodeVisible, toggleHierarchyNode, applySelection]
   );
 
   const handleHierarchyLocate = useCallback(
@@ -2742,97 +3054,88 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
 
   useEffect(() => {
     if (!selectedEntityIds.length) {
-      setSelectedHierarchyNodeIds(new Set());
+      setSelectedHierarchyNodeIds((prev) => (prev.size === 0 ? prev : new Set()));
       return;
     }
     const selectedNodeIds = new Set<string>();
-    setExpandedHierarchyNodeIds((prev) => {
-      const next = new Set(prev);
+    mutateExpandedHierarchyNodeIds((next) => {
+      let changed = false;
       for (const entityId of selectedEntityIds) {
-        const path = findHierarchyPathByEntityId(hierarchyNodes, entityId);
+        const path = hierarchyEntityPathById.get(entityId);
         if (!path || path.length === 0) continue;
         selectedNodeIds.add(path[path.length - 1]);
-        for (let i = 0; i < path.length - 1; i += 1) next.add(path[i]);
+        for (let i = 0; i < path.length - 1; i += 1) {
+          const nodeId = path[i];
+          if (next.has(nodeId)) continue;
+          next.add(nodeId);
+          changed = true;
+        }
       }
-      return next;
+      return changed;
     });
-    setSelectedHierarchyNodeIds(selectedNodeIds);
-  }, [hierarchyNodes, selectedEntityIds]);
+    setSelectedHierarchyNodeIds((prev) => (areStringSetsEqual(prev, selectedNodeIds) ? prev : selectedNodeIds));
+  }, [hierarchyEntityPathById, mutateExpandedHierarchyNodeIds, selectedEntityIds]);
 
   useEffect(() => {
-    if (selectedEntities.length === 0) return;
-    if (selectedEntities.every((ent) => isLayerSelectable(ent.layer))) return;
+    if (selectedEntities.length > 0) {
+      const allVisibleAndSelectable = selectedEntities.every((ent) => {
+        const entityId = getEntityRecordId(ent);
+        return isLayerSelectable(ent.layer) && isEntityVisible(ent.layer, entityId);
+      });
+      if (allVisibleAndSelectable) return;
+      clearSelection();
+      return;
+    }
+    if (!selectedEntity) return;
+    if (isLayerSelectable(selectedEntity.layer) && isEntityVisible(selectedEntity.layer, getEntityRecordId(selectedEntity))) return;
     clearSelection();
-  }, [isLayerSelectable, selectedEntities, clearSelection]);
+  }, [isLayerSelectable, isEntityVisible, selectedEntities, selectedEntity, clearSelection]);
 
-  const hierarchyRows = useMemo(() => {
-    const rows: ReactElement[] = [];
-    const renderNodes = (nodes: DwgHierarchyNode[], depth: number) => {
+  const flattenedHierarchyRows = useMemo(() => {
+    const rows: FlatHierarchyRow[] = [];
+    const walk = (nodes: DwgHierarchyNode[], depth: number) => {
       for (const node of nodes) {
         const children = hierarchyChildren(node);
         const hasChildren = children.length > 0;
-        const expanded = hasChildren && expandedHierarchyNodeIds.has(node.node_id);
+        const expanded = hasChildren && expandedHierarchyNodeIdsRef.current.has(node.node_id);
         const isSelected = selectedHierarchyNodeIds.has(node.node_id);
         const selectable = node.node_kind === 'category' ? true : isLayerSelectable(node.layer);
+        const visible = nodeVisibleMap.get(node.node_id) ?? true;
+        const rowInteractive = node.node_kind === 'category' || (selectable && visible);
         const rowLabel = node.node_kind === 'category' ? `${node.label} (${children.length})` : node.label || node.handle || '--';
 
-        rows.push(
-          <div
-            key={node.node_id}
-            className={`flex items-center gap-1 px-2 py-1 rounded ${selectable ? 'cursor-pointer' : 'cursor-not-allowed opacity-45'} ${
-              isSelected ? 'bg-cyan-900/35 text-cyan-100' : 'hover:bg-gray-800/70 text-gray-200'
-            }`}
-            style={{ paddingLeft: `${8 + depth * 14}px` }}
-            onClick={() => {
-              if (node.node_kind === 'category') toggleHierarchyNode(node.node_id);
-              else if (selectable) handleHierarchyNodeSelect(node);
-            }}
-            title={node.node_kind === 'category' ? `类别 ${node.label}` : `${selectable ? '' : '已被图层过滤 '}句柄 ${node.handle || '--'}`}
-          >
-            {hasChildren ? (
-              <button
-                type="button"
-                className="h-4 w-4 inline-flex items-center justify-center text-gray-400 hover:text-gray-200"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleHierarchyNode(node.node_id);
-                }}
-              >
-                {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-              </button>
-            ) : (
-              <span className="inline-block h-4 w-4" />
-            )}
+        rows.push({
+          node,
+          depth,
+          hasChildren,
+          expanded,
+          isSelected,
+          visible,
+          rowInteractive,
+          rowLabel,
+        });
 
-            <span className={`truncate flex-1 ${node.node_kind === 'category' ? 'text-gray-300 font-medium' : ''}`}>{rowLabel}</span>
-
-            {node.node_kind !== 'category' && (
-              <span className="text-[10px] text-gray-500">{node.type || '--'}</span>
-            )}
-
-            {node.node_kind !== 'category' && node.bbox && (
-              <button
-                type="button"
-                className="h-5 w-5 inline-flex items-center justify-center text-emerald-300 hover:text-emerald-200"
-                title="定位"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleHierarchyLocate(node);
-                }}
-              >
-                <LocateFixed className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-        );
-
-        if (expanded) renderNodes(children, depth + 1);
+        if (expanded) walk(children, depth + 1);
       }
     };
 
-    renderNodes(hierarchyNodes, 0);
+    walk(hierarchyNodes, 0);
     return rows;
-  }, [expandedHierarchyNodeIds, handleHierarchyLocate, handleHierarchyNodeSelect, hierarchyNodes, isLayerSelectable, selectedHierarchyNodeIds, toggleHierarchyNode]);
+  }, [expandedHierarchyVersion, hierarchyNodes, isLayerSelectable, nodeVisibleMap, selectedHierarchyNodeIds]);
+
+  const treeVirtualizer = useVirtualizer({
+    count: flattenedHierarchyRows.length,
+    getScrollElement: () => treeScrollRef.current,
+    getItemKey: (index) => flattenedHierarchyRows[index]?.node.node_id ?? index,
+    estimateSize: () => 28,
+    overscan: 8,
+  });
+
+  useEffect(() => {
+    if (!showTreeSidebar) return;
+    const timer = window.setTimeout(() => treeVirtualizer.measure(), 0);
+    return () => window.clearTimeout(timer);
+  }, [showTreeSidebar, treeVirtualizer]);
 
   useEffect(() => {
     const gCanvas = geometryCanvasRef.current;
@@ -3061,6 +3364,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
       };
 
       for (const entity of entities) {
+        if (!isEntityVisible(entity.layer, entity.id)) continue;
         if (!bboxVisible(entity.bbox, worldViewBounds)) continue;
         const geom = (entity.geom || {}) as Record<string, any>;
         const type = String(entity.type || '').toUpperCase();
@@ -3651,6 +3955,7 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
     boxSelectCurrent,
     cursorScreen,
     isPanning,
+    isEntityVisible,
     resolveCadTextFontFamily,
     shxRenderStatus,
   ]);
@@ -3845,24 +4150,39 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
                 <span className="text-[11px] text-gray-500 ml-auto">{filterSummaryLabel}</span>
               </div>
 
-              <div className="text-[11px] text-gray-500">过滤仅影响选择，不影响图元显示。</div>
+              <div className="text-[11px] text-gray-500">Filter controls selection; eye controls visibility.</div>
 
               <div className="max-h-24 overflow-auto space-y-1 pr-1">
                 {availableLayers.length === 0 ? (
                   <div className="text-[11px] text-gray-500">当前空间无图层数据</div>
                 ) : (
-                  availableLayers.map((layer) => (
-                    <label key={`layer-filter-${layer}`} className="flex items-center gap-2 text-[11px] text-gray-300">
-                      <input
-                        type="checkbox"
-                        className="h-3.5 w-3.5 accent-cyan-500"
-                        checked={layerFilterEnabled && layerWhitelist.has(layer)}
-                        disabled={!layerFilterEnabled}
-                        onChange={() => toggleLayerInWhitelist(layer)}
-                      />
-                      <span className="truncate">{layer}</span>
-                    </label>
-                  ))
+                  availableLayers.map((layer) => {
+                    const visible = !hiddenLayerNames.has(layer);
+                    return (
+                      <div key={`layer-filter-${layer}`} className="flex items-center gap-2 text-[11px] text-gray-300">
+                        <label className="flex items-center gap-2 min-w-0 flex-1">
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 accent-cyan-500"
+                            checked={layerFilterEnabled && layerWhitelist.has(layer)}
+                            disabled={!layerFilterEnabled}
+                            onChange={() => toggleLayerInWhitelist(layer)}
+                          />
+                          <span className={`truncate ${visible ? '' : 'text-gray-500 line-through'}`}>{layer}</span>
+                        </label>
+                        <button
+                          type="button"
+                          className={`h-5 w-5 inline-flex items-center justify-center ${
+                            visible ? 'text-cyan-300 hover:text-cyan-100' : 'text-gray-500 hover:text-gray-300'
+                          }`}
+                          title={visible ? 'Hide layer' : 'Show layer'}
+                          onClick={() => toggleLayerVisibility(layer)}
+                        >
+                          {visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                        </button>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -3871,10 +4191,28 @@ export function CADViewer({ rawFile, fileName }: CADViewerProps) {
               <div className="p-3 text-gray-500">正在加载元素树...</div>
             ) : hierarchyError ? (
               <div className="p-3 text-red-300">{hierarchyError}</div>
-            ) : hierarchyRows.length === 0 ? (
+            ) : flattenedHierarchyRows.length === 0 ? (
               <div className="p-3 text-gray-500">当前空间暂无可展示元素。</div>
             ) : (
-              <div className="flex-1 overflow-auto p-2 space-y-0.5">{hierarchyRows}</div>
+              <div ref={treeScrollRef} className="flex-1 overflow-auto p-2">
+                <div className="relative w-full" style={{ height: `${treeVirtualizer.getTotalSize()}px` }}>
+                  {treeVirtualizer.getVirtualItems().map((virtualRow) => {
+                    const row = flattenedHierarchyRows[virtualRow.index];
+                    if (!row) return null;
+                    return (
+                      <HierarchyVirtualRow
+                        key={row.node.node_id}
+                        row={row}
+                        virtualStart={virtualRow.start}
+                        onToggleNode={toggleHierarchyNode}
+                        onSelectNode={handleHierarchyNodeSelect}
+                        onLocateNode={handleHierarchyLocate}
+                        onToggleVisibility={toggleHierarchyNodeVisibility}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
         </aside>

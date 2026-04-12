@@ -15,6 +15,9 @@ import {
   Layers,
   Building2,
   Menu,
+  ChevronLeft,
+  ChevronRight,
+  Trash2,
   X,
   Server,
   CheckCircle2,
@@ -258,9 +261,9 @@ function App() {
     <div className="min-h-screen bg-gray-950 text-gray-100 flex">
       <aside
         className={`
-          fixed left-0 top-0 h-full bg-gray-900 border-r border-gray-800
-          transition-all duration-300 ease-in-out z-50
-          ${sidebarOpen ? 'w-64' : 'w-0 overflow-hidden'}
+          fixed left-0 top-0 h-screen w-64 bg-gray-900 border-r border-gray-800 z-50 overflow-hidden
+          transition-transform duration-300 ease-in-out
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
       >
         <div className="flex flex-col h-full">
@@ -309,9 +312,9 @@ function App() {
                       key={file.id}
                       onClick={() => selectFile(file)}
                       className={`
-                        group flex items-center gap-2 p-2 rounded-lg cursor-pointer
+                        group flex w-full min-w-0 items-center gap-2 p-2 rounded-lg cursor-pointer box-border overflow-hidden
                         transition-colors
-                        ${selectedFileId === file.id ? 'bg-blue-600/20 border border-blue-600/50' : 'hover:bg-gray-800 border border-transparent'}
+                        ${selectedFileId === file.id ? 'bg-blue-600/20 ring-1 ring-inset ring-blue-500/60' : 'hover:bg-gray-800'}
                       `}
                     >
                       <span className="inline-flex items-center justify-center text-xs font-semibold w-8 h-6 rounded bg-gray-800 text-gray-300">
@@ -330,13 +333,15 @@ function App() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400"
+                        className="h-6 w-6 shrink-0 text-gray-500 opacity-80 hover:opacity-100 hover:text-red-400 focus-visible:opacity-100"
                         onClick={(event) => {
                           event.stopPropagation();
                           deleteFile(file.id);
                         }}
+                        title="删除文件"
+                        aria-label={`删除文件 ${file.name}`}
                       >
-                        <X className="h-3 w-3" />
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
                   ))}
@@ -346,6 +351,30 @@ function App() {
           </ScrollArea>
         </div>
       </aside>
+
+      {sidebarOpen ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed left-[15.5rem] top-1/2 z-[60] h-7 w-7 -translate-y-1/2 rounded-full border border-gray-700 bg-gray-900 text-gray-400 shadow-md hover:bg-gray-800 hover:text-gray-100"
+          title="Hide sidebar"
+          aria-label="Hide sidebar"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+      ) : (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setSidebarOpen(true)}
+          className="fixed left-2 top-1/2 z-[60] h-8 w-8 -translate-y-1/2 rounded-full border border-gray-700 bg-gray-900/95 text-gray-300 shadow-lg hover:bg-gray-800 hover:text-white"
+          title="Expand sidebar"
+          aria-label="Expand sidebar"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      )}
 
       <main
         className={`
