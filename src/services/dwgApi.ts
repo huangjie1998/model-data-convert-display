@@ -121,7 +121,23 @@ export interface DwgPrimitivePoint {
   z?: number;
 }
 
-export type DwgPrimitive =
+export interface DwgPrimitiveSemanticMeta {
+  arrow_tip?: DwgPrimitivePoint;
+  arrow_inward?: DwgPrimitivePoint;
+  arrow_base_mid?: DwgPrimitivePoint;
+  dimension_arrow_role?: string;
+  resolved?: {
+    color_index?: number | null;
+    color_rgb?: string | number | null;
+    lineweight_mm?: number | null;
+    linetype?: string | null;
+  };
+  provenance?: Record<string, unknown>;
+  annotation_context?: Record<string, unknown>;
+  style_ref?: Record<string, unknown>;
+}
+
+type DwgPrimitiveCore =
   | {
       kind: 'line';
       start: DwgPrimitivePoint;
@@ -138,6 +154,8 @@ export type DwgPrimitive =
       end_width?: number;
       global_width?: number;
       subtype?: string;
+      arrow_style?: string;
+      arrow_block?: string;
     }
   | { kind: 'circle'; center: DwgPrimitivePoint; radius: number }
   | {
@@ -164,8 +182,10 @@ export type DwgPrimitive =
       kind: 'text';
       text: string;
       position: DwgPrimitivePoint;
+      color?: string | number;
       height?: number;
       actual_height?: number;
+      width?: number;
       rotation?: number;
       width_factor?: number;
       oblique?: number;
@@ -177,6 +197,8 @@ export type DwgPrimitive =
       is_mtext?: boolean;
       text_mask?: boolean;
       text_mask_padding?: number;
+      text_mask_color?: string | number;
+      text_mask_use_canvas_bg?: boolean;
       subtype?: string;
       font_key?: string | null;
       font_style_name?: string | null;
@@ -201,9 +223,52 @@ export type DwgPrimitive =
       arrow_block?: string;
     };
 
+export type DwgPrimitive = DwgPrimitiveCore & DwgPrimitiveSemanticMeta;
+
 export type DwgGeometry = Record<string, unknown> & {
   primitives?: DwgPrimitive[];
   source_type?: string;
+  dim_style_record?: Record<string, unknown> | null;
+  dim_header_defaults?: Record<string, unknown> | null;
+  dimension_payload?: {
+    dim_kind?: string;
+    measurement?: number | null;
+    formatted_measurement?: string | null;
+    display_text?: string | null;
+    text_position?: DwgPrimitivePoint | null;
+    text_height?: number | null;
+    rotation?: number | null;
+    style_name?: string | null;
+    dimension_style?: string | null;
+    arrow_block?: string | null;
+    arrow_block1?: string | null;
+    arrow_block2?: string | null;
+    arrow_size?: number | null;
+    dim_style_vars?: Record<string, unknown> | null;
+    dim_style_sources?: {
+      defaults?: Record<string, unknown>;
+      style?: Record<string, unknown>;
+      entity_overrides?: Record<string, unknown>;
+    } | null;
+    dim_value_source_map?: Record<string, unknown> | null;
+    dim_line_color_raw?: unknown;
+    dim_ext_line_color_raw?: unknown;
+    dim_line_color_mode?: string | null;
+    dim_ext_line_color_mode?: string | null;
+    dim_line_color_value_raw?: unknown;
+    dim_ext_line_color_value_raw?: unknown;
+    dim_line_color_effective_rgb?: unknown;
+    dim_ext_line_color_effective_rgb?: unknown;
+    dim_line_color_effective_aci?: number | null;
+    dim_ext_line_color_effective_aci?: number | null;
+    dim_line_color_effective_source?: string | null;
+    dim_ext_line_color_effective_source?: string | null;
+    effective_dim_line_color?: unknown;
+    effective_ext_line_color?: unknown;
+    anchors?: Record<string, unknown>;
+    primitive_count?: number;
+    renderable?: boolean;
+  };
   font_key?: string | null;
   font_style_name?: string | null;
   font_name?: string | null;
@@ -220,11 +285,55 @@ export interface DwgEntityLite {
   handle?: string;
   parent_block_id?: string | null;
   instance_path?: string[];
+  semantic_type?: string;
+  semantic_subtype?: string;
+  source_acdb_type?: string;
   geom: DwgGeometry;
   style?: Record<string, unknown>;
+  raw_semantics?: Record<string, unknown>;
+  normalized_semantics?: Record<string, unknown>;
+  mapping_status?: {
+    ok?: boolean;
+    missing_keys?: string[];
+    extra_keys?: string[];
+    source_trace_complete?: boolean;
+  };
+  annotation_context?: Record<string, unknown>;
+  style_ref?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
   bbox?: {
     min: { x: number; y: number; z?: number };
     max: { x: number; y: number; z?: number };
+  };
+}
+
+export interface DwgStyleTables {
+  layers?: Record<string, Record<string, unknown>>;
+  linetypes?: Record<string, Record<string, unknown>>;
+  text_styles?: Record<string, Record<string, unknown>>;
+  dim_styles?: Record<string, Record<string, unknown>>;
+  header_dim_defaults?: Record<string, unknown>;
+  blocks?: Record<string, Record<string, unknown>>;
+}
+
+export interface DwgEntityListResponse {
+  ok: boolean;
+  doc_id: string;
+  space_id: string;
+  space_context?: {
+    id: string;
+    kind: string;
+    display_name: string;
+  };
+  entities: DwgEntityLite[];
+  total_count: number;
+  offset?: number;
+  limit?: number;
+  truncated: boolean;
+  style_tables?: DwgStyleTables;
+  semantic_contract?: {
+    tracks?: string[];
+    primitive_fields?: string[];
   };
 }
 
@@ -233,10 +342,20 @@ export interface DwgHierarchyNode {
   node_kind: 'category' | 'entity' | 'block_ref' | string;
   label: string;
   type?: string;
+  semantic_type?: string;
+  semantic_subtype?: string;
+  category_key?: string;
+  category_label?: string;
+  entity_subtype?: string;
   layer?: string | null;
   handle?: string | null;
   entity_id?: string | null;
   parent_block_id?: string | null;
+  render_state?: {
+    primitive_count?: number;
+    renderable?: boolean;
+    source?: string;
+  } | null;
   bbox?: {
     min: { x: number; y: number; z?: number };
     max: { x: number; y: number; z?: number };
@@ -267,6 +386,9 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   try {
     body = text ? JSON.parse(text) : {};
   } catch {
+    if (response.ok) {
+      throw new Error(`Invalid JSON response from API: ${text.slice(0, 160) || response.statusText || 'empty response'}`);
+    }
     body = {};
   }
   if (!response.ok) {
@@ -294,20 +416,14 @@ export async function listDwgSpaces(docId: string) {
   );
 }
 
-export async function listDwgEntities(docId: string, spaceId?: string, limit?: number) {
+export async function listDwgEntities(docId: string, spaceId?: string, limit?: number, offset?: number) {
   const params = new URLSearchParams();
   if (spaceId) params.set('space_id', spaceId);
   if (typeof limit === 'number' && Number.isFinite(limit)) params.set('limit', String(limit));
+  if (typeof offset === 'number' && Number.isFinite(offset) && offset > 0) params.set('offset', String(offset));
   const query = params.toString();
   const url = `${API_BASE_URL}/dwg/${docId}/entities${query ? `?${query}` : ''}`;
-  return requestJson<{
-    ok: boolean;
-    doc_id: string;
-    space_id: string;
-    entities: DwgEntityLite[];
-    total_count: number;
-    truncated: boolean;
-  }>(url);
+  return requestJson<DwgEntityListResponse>(url);
 }
 
 export async function listDwgHierarchy(docId: string, spaceId?: string) {

@@ -16,6 +16,11 @@ from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import logging
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from dwg_service_core import DwgServiceCore
 
 # 闁板秶鐤嗛弮銉ョ箶
@@ -482,6 +487,7 @@ def dwg_open():
     try:
         file_path = None
         original_name = None
+        file_size_bytes = None
 
         if 'file' in request.files and request.files['file'].filename:
             incoming = request.files['file']
@@ -497,7 +503,15 @@ def dwg_open():
                 safe_name = f"upload_{file_id}.dwg"
             original_name = raw_name
             file_path = UPLOAD_FOLDER / f"{file_id}_{safe_name}"
-            incoming.save(str(file_path))
+            # Avoid intermittent Windows file-handle races observed with direct save()+immediate ODA parse.
+            # Read full upload into memory and write atomically so target handle is fully closed before parsing.
+            incoming.stream.seek(0)
+            payload = incoming.stream.read()
+            if not payload:
+                return jsonify({'error': 'empty upload payload'}), 400
+            file_size_bytes = len(payload)
+            with open(file_path, 'wb') as fh:
+                fh.write(payload)
         else:
             payload = request.get_json(silent=True) or {}
             file_id = str(payload.get('file_id', '')).strip()
@@ -515,8 +529,42 @@ def dwg_open():
             return jsonify({'error': 'dwg source file not found'}), 404
         if file_path.suffix.lower() != '.dwg':
             return jsonify({'error': 'source file is not a .dwg document'}), 400
+        if file_size_bytes is None:
+            try:
+                file_size_bytes = int(file_path.stat().st_size)
+            except Exception:
+                file_size_bytes = None
 
         opened = DWG_SERVICE.open_document(file_path, original_name or file_path.name)
+        try:
+            doc_id = str(opened.get('doc_id', '')).strip()
+            spaces = opened.get('spaces') if isinstance(opened.get('spaces'), list) else []
+            current_space = str(opened.get('current_space') or 'model')
+            model_total = None
+            if doc_id:
+                model_stats = DWG_SERVICE.list_entities(doc_id, space_id='model', limit=1)
+                if isinstance(model_stats, dict):
+                    model_total = int(model_stats.get('total_count') or 0)
+            logger.info(
+                "dwg_open success doc_id=%s file=%s size=%s spaces=%s current_space=%s model_total=%s warnings=%s",
+                doc_id,
+                str(file_path),
+                file_size_bytes,
+                len(spaces),
+                current_space,
+                model_total,
+                len(opened.get('warnings') or []) if isinstance(opened.get('warnings'), list) else 0,
+            )
+            if model_total == 0:
+                logger.warning(
+                    "dwg_open zero-entity parse doc_id=%s file=%s size=%s current_space=%s",
+                    doc_id,
+                    str(file_path),
+                    file_size_bytes,
+                    current_space,
+                )
+        except Exception as log_exc:
+            logger.warning(f"dwg_open post-open diagnostics failed: {log_exc}")
         return jsonify({'ok': True, **opened})
     except Exception as e:
         logger.error(f"dwg_open error: {e}")
@@ -535,7 +583,8 @@ def dwg_spaces(doc_id):
 def dwg_entities(doc_id):
     space_id = request.args.get('space_id', default=None, type=str)
     limit = request.args.get('limit', default=None, type=int)
-    entities = DWG_SERVICE.list_entities(doc_id, space_id=space_id, limit=limit)
+    offset = request.args.get('offset', default=0, type=int)
+    entities = DWG_SERVICE.list_entities(doc_id, space_id=space_id, limit=limit, offset=offset or 0)
     if entities is None:
         return jsonify({'error': 'document session not found'}), 404
     return jsonify({'ok': True, **entities})
@@ -791,7 +840,3 @@ if __name__ == '__main__':
     logger.info("=" * 60)
     
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
-
-
-
-

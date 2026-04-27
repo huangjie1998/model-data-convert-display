@@ -1,0 +1,254 @@
+{
+  "extractedAt": "2026-04-23T04:18:24.929Z",
+  "bundlePath": "public/vendor/cadPreivew.min.js",
+  "fileCount": 41,
+  "includesSourcesContent": true,
+  "files": [
+    {
+      "index": 0,
+      "source": "webpack://CadEngine/webpack/universalModuleDefinition",
+      "output": "sources/webpack_/CadEngine/webpack/universalModuleDefinition",
+      "bytes": 371
+    },
+    {
+      "index": 1,
+      "source": "webpack://CadEngine/./src/core/extension/Box3.js",
+      "output": "sources/webpack_/CadEngine/src/core/extension/Box3.js",
+      "bytes": 13556
+    },
+    {
+      "index": 2,
+      "source": "webpack://CadEngine/./node_modules/heatmap.js/build/heatmap.js",
+      "output": "sources/webpack_/CadEngine/node_modules/heatmap.js/build/heatmap.js",
+      "bytes": 19585
+    },
+    {
+      "index": 3,
+      "source": "webpack://CadEngine/./node_modules/polylabel/polylabel.js",
+      "output": "sources/webpack_/CadEngine/node_modules/polylabel/polylabel.js",
+      "bytes": 4870
+    },
+    {
+      "index": 4,
+      "source": "webpack://CadEngine/./node_modules/three/build/three.module.js",
+      "output": "sources/webpack_/CadEngine/node_modules/three/build/three.module.js",
+      "bytes": 1164260
+    },
+    {
+      "index": 5,
+      "source": "webpack://CadEngine/./node_modules/three/src/math/MathUtils.js",
+      "output": "sources/webpack_/CadEngine/node_modules/three/src/math/MathUtils.js",
+      "bytes": 5493
+    },
+    {
+      "index": 6,
+      "source": "webpack://CadEngine/./node_modules/three/src/math/Quaternion.js",
+      "output": "sources/webpack_/CadEngine/node_modules/three/src/math/Quaternion.js",
+      "bytes": 12961
+    },
+    {
+      "index": 7,
+      "source": "webpack://CadEngine/./node_modules/three/src/math/Vector3.js",
+      "output": "sources/webpack_/CadEngine/node_modules/three/src/math/Vector3.js",
+      "bytes": 11875
+    },
+    {
+      "index": 8,
+      "source": "webpack://CadEngine/./node_modules/tinyqueue/index.js",
+      "output": "sources/webpack_/CadEngine/node_modules/tinyqueue/index.js",
+      "bytes": 1772
+    },
+    {
+      "index": 9,
+      "source": "webpack://CadEngine/./src/api/WebAPI.ts",
+      "output": "sources/webpack_/CadEngine/src/api/WebAPI.ts",
+      "bytes": 8859
+    },
+    {
+      "index": 10,
+      "source": "webpack://CadEngine/./src/core/Scene3D.ts",
+      "output": "sources/webpack_/CadEngine/src/core/Scene3D.ts",
+      "bytes": 58838
+    },
+    {
+      "index": 11,
+      "source": "webpack://CadEngine/./src/core/camera/Camera2D.ts",
+      "output": "sources/webpack_/CadEngine/src/core/camera/Camera2D.ts",
+      "bytes": 1646
+    },
+    {
+      "index": 12,
+      "source": "webpack://CadEngine/./src/core/camera/Camera2DControls.ts",
+      "output": "sources/webpack_/CadEngine/src/core/camera/Camera2DControls.ts",
+      "bytes": 5734
+    },
+    {
+      "index": 13,
+      "source": "webpack://CadEngine/./src/core/event/EventEnum.ts",
+      "output": "sources/webpack_/CadEngine/src/core/event/EventEnum.ts",
+      "bytes": 725
+    },
+    {
+      "index": 14,
+      "source": "webpack://CadEngine/./src/core/event/Observable.ts",
+      "output": "sources/webpack_/CadEngine/src/core/event/Observable.ts",
+      "bytes": 16773
+    },
+    {
+      "index": 15,
+      "source": "webpack://CadEngine/./src/core/event/ObservablesManager.ts",
+      "output": "sources/webpack_/CadEngine/src/core/event/ObservablesManager.ts",
+      "bytes": 1218
+    },
+    {
+      "index": 16,
+      "source": "webpack://CadEngine/./src/core/plugins/CamreaZoom.ts",
+      "output": "sources/webpack_/CadEngine/src/core/plugins/CamreaZoom.ts",
+      "bytes": 9031
+    },
+    {
+      "index": 17,
+      "source": "webpack://CadEngine/./src/core/plugins/Clipping.ts",
+      "output": "sources/webpack_/CadEngine/src/core/plugins/Clipping.ts",
+      "bytes": 29204
+    },
+    {
+      "index": 18,
+      "source": "webpack://CadEngine/./src/core/plugins/GlxLoader.ts",
+      "output": "sources/webpack_/CadEngine/src/core/plugins/GlxLoader.ts",
+      "bytes": 9082
+    },
+    {
+      "index": 19,
+      "source": "webpack://CadEngine/./src/core/plugins/HeatmapPlugin.ts",
+      "output": "sources/webpack_/CadEngine/src/core/plugins/HeatmapPlugin.ts",
+      "bytes": 12014
+    },
+    {
+      "index": 20,
+      "source": "webpack://CadEngine/./src/core/plugins/MapPlugin.ts",
+      "output": "sources/webpack_/CadEngine/src/core/plugins/MapPlugin.ts",
+      "bytes": 7124
+    },
+    {
+      "index": 21,
+      "source": "webpack://CadEngine/./src/core/plugins/MarkPlugin.ts",
+      "output": "sources/webpack_/CadEngine/src/core/plugins/MarkPlugin.ts",
+      "bytes": 7912
+    },
+    {
+      "index": 22,
+      "source": "webpack://CadEngine/./src/core/plugins/MeasurePlugin.ts",
+      "output": "sources/webpack_/CadEngine/src/core/plugins/MeasurePlugin.ts",
+      "bytes": 20194
+    },
+    {
+      "index": 23,
+      "source": "webpack://CadEngine/./src/core/plugins/ObjectPaint.ts",
+      "output": "sources/webpack_/CadEngine/src/core/plugins/ObjectPaint.ts",
+      "bytes": 5731
+    },
+    {
+      "index": 24,
+      "source": "webpack://CadEngine/./src/core/plugins/PointOfView.ts",
+      "output": "sources/webpack_/CadEngine/src/core/plugins/PointOfView.ts",
+      "bytes": 17997
+    },
+    {
+      "index": 25,
+      "source": "webpack://CadEngine/./src/core/plugins/Snapper.ts",
+      "output": "sources/webpack_/CadEngine/src/core/plugins/Snapper.ts",
+      "bytes": 74124
+    },
+    {
+      "index": 26,
+      "source": "webpack://CadEngine/./src/core/plugins/ViewPoint.ts",
+      "output": "sources/webpack_/CadEngine/src/core/plugins/ViewPoint.ts",
+      "bytes": 494
+    },
+    {
+      "index": 27,
+      "source": "webpack://CadEngine/./src/util/DragDrop.ts",
+      "output": "sources/webpack_/CadEngine/src/util/DragDrop.ts",
+      "bytes": 4633
+    },
+    {
+      "index": 28,
+      "source": "webpack://CadEngine/./src/util/MathUtils.ts",
+      "output": "sources/webpack_/CadEngine/src/util/MathUtils.ts",
+      "bytes": 25642
+    },
+    {
+      "index": 29,
+      "source": "webpack://CadEngine/./src/util/ObjectPool.ts",
+      "output": "sources/webpack_/CadEngine/src/util/ObjectPool.ts",
+      "bytes": 1020
+    },
+    {
+      "index": 30,
+      "source": "webpack://CadEngine/./node_modules/three/examples/jsm/controls/TransformControls.js",
+      "output": "sources/webpack_/CadEngine/node_modules/three/examples/jsm/controls/TransformControls.js",
+      "bytes": 40017
+    },
+    {
+      "index": 31,
+      "source": "webpack://CadEngine/./node_modules/three/examples/jsm/libs/stats.module.js",
+      "output": "sources/webpack_/CadEngine/node_modules/three/examples/jsm/libs/stats.module.js",
+      "bytes": 3514
+    },
+    {
+      "index": 32,
+      "source": "webpack://CadEngine/./node_modules/three/examples/jsm/loaders/DRACOLoader.js",
+      "output": "sources/webpack_/CadEngine/node_modules/three/examples/jsm/loaders/DRACOLoader.js",
+      "bytes": 13099
+    },
+    {
+      "index": 33,
+      "source": "webpack://CadEngine/./node_modules/three/examples/jsm/loaders/FontLoader.js",
+      "output": "sources/webpack_/CadEngine/node_modules/three/examples/jsm/loaders/FontLoader.js",
+      "bytes": 3475
+    },
+    {
+      "index": 34,
+      "source": "webpack://CadEngine/./node_modules/three/examples/jsm/loaders/GLTFLoader.js",
+      "output": "sources/webpack_/CadEngine/node_modules/three/examples/jsm/loaders/GLTFLoader.js",
+      "bytes": 100707
+    },
+    {
+      "index": 35,
+      "source": "webpack://CadEngine/webpack/bootstrap",
+      "output": "sources/webpack_/CadEngine/webpack/bootstrap",
+      "bytes": 651
+    },
+    {
+      "index": 36,
+      "source": "webpack://CadEngine/webpack/runtime/compat get default export",
+      "output": "sources/webpack_/CadEngine/webpack/runtime/compat get default export",
+      "bytes": 267
+    },
+    {
+      "index": 37,
+      "source": "webpack://CadEngine/webpack/runtime/define property getters",
+      "output": "sources/webpack_/CadEngine/webpack/runtime/define property getters",
+      "bytes": 308
+    },
+    {
+      "index": 38,
+      "source": "webpack://CadEngine/webpack/runtime/hasOwnProperty shorthand",
+      "output": "sources/webpack_/CadEngine/webpack/runtime/hasOwnProperty shorthand",
+      "bytes": 88
+    },
+    {
+      "index": 39,
+      "source": "webpack://CadEngine/webpack/runtime/make namespace object",
+      "output": "sources/webpack_/CadEngine/webpack/runtime/make namespace object",
+      "bytes": 274
+    },
+    {
+      "index": 40,
+      "source": "webpack://CadEngine/./src/Engine.ts",
+      "output": "sources/webpack_/CadEngine/src/Engine.ts",
+      "bytes": 2016
+    }
+  ]
+}

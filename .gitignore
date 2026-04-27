@@ -29,3 +29,10 @@ __pycache__/
 # runtime/generated model files
 server/uploads/
 server/converted/
+server/venv/
+server/tmp_probe_dwg/
+tmp_dwg/
+tmp_dimension_block.txt
+
+__MACOSX/
+**/__MACOSX/

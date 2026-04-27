@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ZoomIn, ZoomOut, RotateCcw, Maximize, Download, FileText, AlertTriangle } from 'lucide-react';
 import { DXFViewer } from './DXFViewer';
-import { CADViewer } from './CADViewer';
+import { CADViewerCadEngine } from './CADViewerCadEngine';
 
 interface Drawing2DViewerProps {
   fileUrl: string | null;
@@ -84,7 +84,7 @@ export function Drawing2DViewer({ fileUrl, fileType, fileName, rawFile = null }:
   };
 
   if (normalizedType === 'dwg') {
-    return <CADViewer rawFile={rawFile} fileName={fileName} />;
+    return <CADViewerCadEngine rawFile={rawFile} />;
   }
 
   if (fileUrl && normalizedType === 'dxf' && showDXFViewer) {

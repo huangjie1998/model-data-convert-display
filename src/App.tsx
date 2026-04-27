@@ -312,7 +312,7 @@ function App() {
                       key={file.id}
                       onClick={() => selectFile(file)}
                       className={`
-                        group flex w-full min-w-0 items-center gap-2 p-2 rounded-lg cursor-pointer box-border overflow-hidden
+                        group flex w-full min-w-0 items-start gap-2 p-2 rounded-lg cursor-pointer box-border overflow-hidden
                         transition-colors
                         ${selectedFileId === file.id ? 'bg-blue-600/20 ring-1 ring-inset ring-blue-500/60' : 'hover:bg-gray-800'}
                       `}
@@ -321,9 +321,11 @@ function App() {
                         {getFileIcon(file)}
                       </span>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1">
-                          <p className="text-sm text-gray-200 truncate">{file.name}</p>
-                          {file.converted && <span className="text-xs text-amber-400">-&gt;</span>}
+                        <div className="flex min-w-0 items-start gap-1">
+                          <p className="min-w-0 text-sm leading-5 text-gray-200 whitespace-normal break-all [overflow-wrap:anywhere]">
+                            {file.name}
+                          </p>
+                          {file.converted && <span className="mt-0.5 shrink-0 text-xs text-amber-400">-&gt;</span>}
                         </div>
                         <p className="text-xs text-gray-500">
                           {file.category === '3d' ? '3D 模型' : '2D 图纸'}
@@ -333,7 +335,7 @@ function App() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6 shrink-0 text-gray-500 opacity-80 hover:opacity-100 hover:text-red-400 focus-visible:opacity-100"
+                        className="mt-0.5 h-6 w-6 shrink-0 self-start text-gray-500 opacity-80 hover:opacity-100 hover:text-red-400 focus-visible:opacity-100"
                         onClick={(event) => {
                           event.stopPropagation();
                           deleteFile(file.id);

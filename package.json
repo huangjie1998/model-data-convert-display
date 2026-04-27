@@ -4,13 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "npm run build:cad-runtime && vite",
+    "build": "npm run build:cad-runtime && tsc -b && vite build",
+    "build:cad-runtime": "node ./scripts/cad-engine/build-cad-runtime.mjs",
+    "build:cad-whitebox": "npm run build:cad-runtime",
+    "test:drawing1-tree-consistency": "py server/scripts/check_drawing1_tree_consistency.py",
+    "test:dwg-acceptance": "py server/scripts/check_dwg_acceptance.py",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
+    "@mlightcad/shx-parser": "^1.3.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-aspect-ratio": "^1.1.8",
