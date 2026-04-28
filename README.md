@@ -1,272 +1,271 @@
-# 建筑图纸浏览器
+# Model Data Convert Display
 
-一个用于上传、查看和管理建筑图纸及 3D 模型的 Web 应用程序。支持直接在浏览器中查看多种格式的文件，并提供后端转换服务处理专有格式。
+用于浏览、转换和诊断建筑图纸与模型文件的 Web 应用。当前重点能力是 **DWG/DXF/CAD 图纸浏览**、**SKP/3D 模型转换** 和 **CAD 属性/图层/层级树分析**。
 
-## 功能特性
+## 当前重点
 
-### 支持的文件格式
+- DWG 通过后端 ODA runtime 解析，前端使用自研 CAD runtime 渲染。
+- CAD viewer 支持图层树、实体树、属性面板、选择、高亮、文字/标注/填充/块等 DWG 语义。
+- 项目正在规划自研 **Web CAD Bundle**，用于统一后端解析结果、前端渲染、拾取、属性栏和诊断数据结构。
 
-#### 3D 模型
-| 格式 | 浏览器直接支持 | 后端转换 |
-|------|-------------|---------|
-| GLTF/GLB | ✅ | - |
-| OBJ | ✅ | - |
-| FBX | ✅ | - |
-| SKP (SketchUp) | ❌ | ✅ 转换为 GLB |
+Web CAD Bundle 设计文档见：
 
-#### 2D 图纸
-| 格式 | 浏览器直接支持 | 后端转换 |
-|------|-------------|---------|
-| PDF | ✅ | - |
-| PNG/JPG | ✅ | - |
-| DXF | ✅ (内置查看器) | - |
-| DWG (AutoCAD) | ❌ | ✅ 转换为 PDF |
+- `docs/cad/web-cad-bundle-v1.md`
 
-### 主要功能
+## 支持格式
 
-- 🎯 **拖拽上传**: 支持拖拽文件到上传区域
-- 🔧 **格式转换**: 后端服务自动将 SKP 和 DWG 转换为可查看格式
-- 👁️ **3D 模型查看**: 使用 Three.js 渲染，支持旋转、缩放、平移
-- 📐 **2D 图纸查看**: 支持缩放、平移、旋转，内置 DXF 渲染器
-- 📁 **文件管理**: 侧边栏管理已上传的文件
-- 📱 **响应式设计**: 适配不同屏幕尺寸
+### 2D 图纸
 
-## 快速开始
+| 格式 | 当前处理方式 | 说明 |
+| --- | --- | --- |
+| DWG | 后端 ODA 解析 + 前端 CAD runtime | 当前重点维护路径 |
+| DXF | 前端/后端 CAD 数据解析 | 适合作为开放 CAD 交换格式 |
+| PDF | 浏览器预览 | 用于导出的图纸文档 |
+| PNG/JPG | 浏览器预览 | 用于普通图片图纸 |
 
-### 环境要求
+### 3D 模型
+
+| 格式 | 当前处理方式 | 说明 |
+| --- | --- | --- |
+| GLTF/GLB | 前端直接浏览 | 推荐的 Web 3D 格式 |
+| OBJ/FBX | 前端浏览或转换 | 依赖 Three.js 加载能力 |
+| SKP | 后端转换 | 依赖 SketchUp/ODA/转换工具链 |
+
+## 架构概览
+
+```text
+DWG/DXF/SKP/GLB
+  ↓
+server/
+  ├─ DWG: ODA OdReadEx / OdVectorizeEx
+  ├─ SKP: 转换服务
+  └─ API: Flask
+  ↓
+src/
+  ├─ CAD viewer
+  ├─ CAD runtime bridge
+  ├─ 图层 / 层级树 / 属性面板
+  └─ 3D viewer
+```
+
+DWG 当前链路：
+
+```text
+DWG
+  ↓ ODA dump
+server/dwg_service_core.py
+  ↓ server/dwg/*
+entities / hierarchy / primitives / diagnostics
+  ↓ src/services/dwgApi.ts
+src/components/viewer/CADViewerCadEngine.tsx
+  ↓ cadEngine/glx
+public/vendor/cad-engine-runtime.js
+```
+
+规划中的 Web CAD Bundle 链路：
+
+```text
+DWG
+  ↓ ODA / 后端解析
+Web CAD Bundle
+  ├─ manifest
+  ├─ document / tables
+  ├─ entities
+  ├─ render
+  ├─ pick
+  ├─ hierarchy
+  ├─ properties
+  ├─ diagnostics
+  └─ raw
+  ↓
+前端 CAD runtime
+```
+
+## Web CAD Bundle
+
+Web CAD Bundle 是项目后续 DWG 架构的核心协议。它不是完整 DWG 数据库复刻，而是：
+
+- 用 `entities` 保存规范化 CAD 语义。
+- 用 `render` 保存 Web 渲染 primitive/bucket。
+- 用 `pick` 保存拾取索引。
+- 用 `hierarchy` 保存图层/块/实体树。
+- 用 `properties` 保存 AutoCAD 风格属性栏数据。
+- 用 `raw` 保存 ODA/AutoCAD 原始字段，作为保真和排查兜底。
+
+关键原则：
+
+- `0` 是合法值，例如 `startWidth: 0` 不能被过滤。
+- `MTEXT.definedWidth`、`actualWidth`、`bboxWidth` 必须分开。
+- 颜色、线宽、字体、标注样式必须带 `source/provenance`。
+- 渲染、拾取、属性和原始字段分层维护。
+
+详细 schema 见 `docs/cad/web-cad-bundle-v1.md`。
+
+## 开发环境
+
+要求：
 
 - Node.js 20+
-- Python 3.10+ (后端转换服务)
-- Docker & Docker Compose (推荐部署方式)
+- Python 3.10+
+- Windows 环境建议使用 Python 3.11+
+- DWG 真解析需要配置 ODA runtime
 
-### 安装依赖
+安装依赖：
 
-```bash
-# 安装前端依赖
+```powershell
 npm install
-
-# 安装后端依赖 (如不使用 Docker)
 cd server
 pip install -r requirements.txt
 ```
 
-### 开发模式
+启动前端：
 
-```bash
-# 启动前端开发服务器
+```powershell
 npm run dev
+```
 
-# 在另一个终端启动后端服务 (可选)
+启动后端：
+
+```powershell
 cd server
 python app.py
 ```
 
-前端将运行在 http://localhost:5174，后端在 http://localhost:5000
+常用地址：
 
-### 生产部署
+- 前端：`http://localhost:5174`
+- 后端：`http://localhost:5000`
+- DWG 健康检查：`http://localhost:5000/api/dwg/health`
 
-#### 方式一：使用 Docker Compose (推荐)
+## ODA Runtime
 
-```bash
-# 构建前端
-cd server
-npm run build
-cd ..
+项目支持把 ODA runtime 放在仓库管理目录下：
 
-# 启动所有服务
-docker-compose up -d
+```text
+server/vendor/oda/win-x64/2026.03.25-v1/bin
+server/vendor/oda/win-x64/2026.03.25-v1/manifest.json
 ```
 
-访问 http://localhost 即可使用。
-
-#### 方式二：手动部署
-
-1. 构建前端
-```bash
-npm run build
-```
-
-2. 配置 Web 服务器 (如 Nginx) 指向 `dist` 目录
-
-3. 启动后端服务
-```bash
-cd server
-python app.py
-```
-
-## 文件格式说明
-
-### SKP (SketchUp)
-
-SKP 是 SketchUp 的专有格式，**浏览器无法直接解析**。
-
-**解决方案：**
-1. **启用后端服务**: 后端使用 ODA File Converter 或 Blender 自动转换
-2. **手动转换**: 在 SketchUp 中导出为 GLTF/GLB 格式
-   - 安装 Khronos glTF 导出插件
-   - 文件 → 导出 → 3D模型 → 选择 GLTF/GLB
-
-### DWG (AutoCAD)
-
-DWG 是 AutoCAD 的专有格式，**浏览器无法直接解析**。
-
-**解决方案：**
-1. **启用后端服务**: 后端使用 ODA File Converter 转换为 PDF
-2. **转换为 DXF**: 在 AutoCAD 中另存为 DXF 格式（前端内置 DXF 查看器）
-3. **导出为 PDF**: 在 AutoCAD 中导出为 PDF
-
-### DXF
-
-DXF 是 CAD 数据交换的标准格式。本项目**内置 DXF 查看器**，可直接在浏览器中渲染：
-- 支持 LINE、CIRCLE、ARC、LWPOLYLINE 等实体
-- 图层管理
-- 坐标系显示
-- 缩放、平移、旋转
-
-## 后端转换服务
-
-后端服务基于 Flask，提供以下 API：
-
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/api/health` | GET | 健康检查 |
-| `/api/upload` | POST | 上传并转换文件 |
-| `/api/download/<filename>` | GET | 下载文件 |
-| `/api/converters/status` | GET | 查看转换工具状态 |
-| `/api/cleanup` | POST | 清理临时文件 |
-
-### 转换工具
-
-后端依赖以下工具进行格式转换：
-
-- **ODA File Converter**: DWG ↔ DXF/DWF/PDF (最可靠)
-- **LibreCAD**: DWG/DXF 查看和转换
-- **Assimp**: 3D 模型格式转换
-- **Inkscape**: 矢量图形处理
-
-### Docker 部署注意事项
-
-由于 ODA File Converter 需要从 ODA 官网下载，且可能需要许可，Docker 镜像中：
-1. 尝试自动下载并安装 ODA File Converter
-2. 如失败，则使用 LibreCAD 作为备选方案
-3. 建议在宿主机安装 ODA File Converter 并挂载到容器
-
-## 项目结构
-
-```
-.
-├── src/                      # 前端源码
-│   ├── components/
-│   │   ├── viewer/          # 查看器组件
-│   │   │   ├── Model3DViewer.tsx    # 3D 模型查看器
-│   │   │   ├── Drawing2DViewer.tsx  # 2D 图纸查看器
-│   │   │   └── DXFViewer.tsx        # DXF 专用查看器
-│   │   ├── upload/          # 上传组件
-│   │   └── FormatConverter.tsx      # 格式转换指南
-│   ├── services/
-│   │   └── converterApi.ts  # 后端 API 接口
-│   └── App.tsx              # 主应用组件
-├── server/                   # 后端服务
-│   ├── app.py               # Flask 应用
-│   ├── converter.py         # 转换器类
-│   ├── requirements.txt     # Python 依赖
-│   └── Dockerfile           # Docker 构建文件
-├── docker-compose.yml       # Docker Compose 配置
-└── nginx.conf               # Nginx 配置
-```
-
-## 技术栈
-
-### 前端
-- React 19 + TypeScript
-- Vite 7
-- Tailwind CSS 3
-- shadcn/ui 组件库
-- Three.js + React Three Fiber (3D 渲染)
-- dxf-parser (DXF 解析)
-
-### 后端
-- Python 3.10+
-- Flask
-- Flask-CORS
-- ODA File Converter / LibreCAD
-
-## 故障排除
-
-### 后端服务无法连接
-
-1. 检查后端服务是否运行
-   ```bash
-   curl http://localhost:5000/api/health
-   ```
-
-2. 检查防火墙设置
-
-3. 检查 CORS 配置
-
-### SKP/DWG 转换失败
-
-1. 检查转换工具是否安装
-   ```bash
-   curl http://localhost:5000/api/converters/status
-   ```
-
-2. 查看后端日志
-   ```bash
-   docker logs cad-converter-backend
-   ```
-
-3. 手动转换后上传
-
-### DXF 文件渲染异常
-
-- 本项目的 DXF 查看器实现了基础实体类型的渲染
-- 复杂实体（如多行文字、块引用、样条曲线）可能无法正确显示
-- 建议将 DXF 转换为 PDF 以获得最佳效果
-
-## 许可证
-
-MIT License
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request。
-
-## 致谢
-
-- [Three.js](https://threejs.org/) - 3D 渲染引擎
-- [Open Design Alliance](https://www.opendesign.com/) - DWG/DXF 技术支持
-- [shadcn/ui](https://ui.shadcn.com/) - UI 组件库
-
-## ODA Runtime (Project-Managed)
-
-This project now supports a project-managed ODA runtime under:
-
-- `server/vendor/oda/win-x64/2026.03.25-v1/bin`
-- `server/vendor/oda/win-x64/2026.03.25-v1/manifest.json`
-
-Sync runtime files from local ODA install:
+同步本机 ODA runtime：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\sync-oda-runtime.ps1 -Clean
 ```
 
-Backend runtime resolution priority:
+后端查找顺序：
 
 1. `ODA_READ_EXE`
 2. `ODA_RUNTIME_ROOT`
-3. project vendor: `server/vendor/oda/<profile>/<version>/bin/OdReadEx(.exe)`
-4. system PATH / fallback
+3. `server/vendor/oda/<profile>/<version>/bin/OdReadEx(.exe)`
+4. 系统 PATH / fallback
 
-Health check:
+健康检查：
 
-```bash
+```powershell
 curl http://localhost:5000/api/dwg/health
 ```
 
-Expected fields include:
+期望字段：
 
 - `mode: oda_cli`
 - `oda_runtime_in_project: true`
 - `oda_profile: win-x64`
 - `oda_version: 2026.03.25-v1`
+
+如果看到 stub mode 警告，需要检查 `ODA_READ_EXE`、`ODA_RUNTIME_ROOT` 或项目内 ODA runtime 是否存在。
+
+## 常用命令
+
+构建：
+
+```powershell
+npm run build
+```
+
+只构建 CAD runtime：
+
+```powershell
+npm run build:cad-runtime
+```
+
+后端 Python 编译检查：
+
+```powershell
+py -m compileall -q server\dwg server\dwg_service_core.py
+```
+
+DWG 回归：
+
+```powershell
+npm run test:drawing1-tree-consistency
+npm run test:dwg-acceptance
+```
+
+Lint：
+
+```powershell
+npm run lint
+```
+
+## 项目结构
+
+```text
+src/
+  components/viewer/
+    CADViewerCadEngine.tsx        CAD 主 viewer
+    Drawing2DViewer.tsx           2D viewer 路由入口
+    cadEngine/                    CAD 前端 runtime、GLX、属性、图层和 hooks
+  services/
+    dwgApi.ts                     DWG API 类型和请求
+server/
+  app.py                          后端入口
+  app_skp_api.py                  Flask API 集成
+  dwg_service_core.py             DWG session/API 编排
+  dwg/                            DWG parser、实体、标注、块、样式、文本、查询模块
+docs/
+  cad/
+    web-cad-bundle-v1.md          Web CAD Bundle 协议设计
+scripts/
+  cad-engine/                     CAD runtime 构建脚本
+public/vendor/
+  cad-engine-runtime.js           生成的 CAD runtime
+```
+
+## DWG 维护重点
+
+当前 DWG viewer 重点关注：
+
+- `POLYLINE/LWPOLYLINE` 起止宽度、逐段宽度、bulge。
+- `TEXT/MTEXT` 字体、SHX、大字体、方向、实际 bbox。
+- `DIMENSION` 尺寸线颜色、尺寸界线颜色、文字颜色、匿名块展开。
+- `HATCH` 图案、边界、性能和缓存。
+- `INSERT/BLOCK` 块内 ARC/ELLIPSE/POLYLINE 几何变换。
+- 图层/实体树隐藏显示性能。
+- 大图纸加载、二次 loading、拾取性能。
+
+新增 DWG 字段时，应优先考虑是否需要进入 Web CAD Bundle 的：
+
+- `entities[].geom`
+- `entities[].style`
+- `properties`
+- `render`
+- `pick`
+- `raw`
+
+## 清理策略
+
+仓库保留正式回归脚本：
+
+- `server/scripts/check_dwg_acceptance.py`
+- `server/scripts/check_drawing1_tree_consistency.py`
+
+临时 dump、调试输出和本地 DWG 样例不应提交。相关路径已加入 `.gitignore`：
+
+- `tmp_dwg/`
+- `tmp_dimension_block.txt`
+- `server/uploads/`
+- `server/converted/`
+
+## 许可证
+
+MIT License
