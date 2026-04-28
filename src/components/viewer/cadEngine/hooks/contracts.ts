@@ -87,7 +87,6 @@ export interface UseCadSelectionInput {
   engineRef: MutableRefObject<CadEngineInstance | null>;
   viewportRef: RefObject<HTMLDivElement | null>;
   didDragRef: MutableRefObject<boolean>;
-  focusBbox: (bbox: DwgHierarchyNode['bbox']) => void;
 }
 
 export interface UseCadSelectionResult {
@@ -119,7 +118,7 @@ export interface UseCadDocumentLifecycleResult {
   nodes: DwgHierarchyNode[];
   warnings: string[];
   treeConsistency: TreeConsistencyDiagnostics | null;
-  loadSpace: (activeDocId: string, spaceId: string) => Promise<void>;
+  loadSpace: (activeDocId: string, spaceId: string) => Promise<unknown>;
 }
 
 export interface UseCadViewStateInput {

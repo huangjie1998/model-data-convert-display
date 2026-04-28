@@ -188,6 +188,7 @@ function parseEntityText(entity) {
     textMaskUseCanvasBg: toBooleanValue(extras.text_mask_use_canvas_bg),
     horizontalMode: toStringValue(extras.horizontal_mode),
     verticalMode: toStringValue(extras.vertical_mode),
+    verticalText: toBooleanValue(extras.text_vertical),
     attachment: toStringValue(extras.attachment),
     subtype: toStringValue(extras.subtype),
     fontKey: toStringValue(extras.font_key),

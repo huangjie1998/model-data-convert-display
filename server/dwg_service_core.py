@@ -568,6 +568,7 @@ class DwgServiceCore:
         geom_out["font_kind"] = font_kind
         geom_out["font_source"] = font_source
         geom_out["shape_file"] = bool((style_rec or {}).get("shape_file", False))
+        geom_out["text_vertical"] = bool((style_rec or {}).get("vertical", False))
 
         out = dict(ent)
         out["geom"] = geom_out
@@ -2069,8 +2070,11 @@ class DwgServiceCore:
         if not lines:
             return []
 
+        is_mtext = bool(geom.get("is_mtext", False))
+        text_vertical = bool(geom.get("text_vertical", False))
+        height_source = geom.get("height") if is_mtext or text_vertical else geom.get("actual_height", geom.get("height", 100.0))
         try:
-            height = float(geom.get("actual_height", geom.get("height", 100.0)))
+            height = float(height_source)
         except Exception:
             height = 100.0
         if not math.isfinite(height) or height <= 1e-9:
@@ -2091,8 +2095,6 @@ class DwgServiceCore:
             rotation_deg = 0.0
         mirrored_x = bool(geom.get("mirrored_x", False))
         mirrored_y = bool(geom.get("mirrored_y", False))
-        is_mtext = bool(geom.get("is_mtext", False))
-
         shear = math.tan(math.radians(oblique_deg))
         rot_rad = math.radians(rotation_deg)
         cos_r = math.cos(rot_rad)
@@ -2105,12 +2107,31 @@ class DwgServiceCore:
         line_gap = height * (1.22 if is_mtext else 1.0)
         char_w = height * 0.62 * width_factor
         advance = height * 0.72 * width_factor
+        try:
+            target_width = float(geom.get("actual_width", 0.0))
+        except Exception:
+            target_width = 0.0
+        max_line_len = max((len(line) for line in lines), default=0)
+        natural_width = max(0.0, max_line_len * advance)
+        fit_x_scale = 1.0
+        if (
+            not text_vertical
+            and not is_mtext
+            and abs(math.sin(rot_rad)) < 0.985
+            and
+            math.isfinite(target_width)
+            and target_width > 1e-9
+            and math.isfinite(natural_width)
+            and natural_width > 1e-9
+            and str(geom.get("text_extents_source") or "").strip().lower() in ("oda_bbox", "oda_actual_width")
+        ):
+            fit_x_scale = max(1e-6, min(1000.0, target_width / natural_width))
 
         outlines: List[Dict[str, object]] = []
         for line_index, line in enumerate(lines):
             x_cursor = 0.0
             y_offset = -line_index * line_gap
-            for ch in line:
+            for char_index, ch in enumerate(line):
                 glyph = _shx_char_strokes(ch)
                 if glyph is None:
                     # Unknown character, let frontend text fallback render this entity.
@@ -2123,6 +2144,10 @@ class DwgServiceCore:
                         for px, py in stroke:
                             x_local = x_cursor + px * char_w
                             y_local = y_offset + py * height
+                            if text_vertical:
+                                x_local = line_index * line_gap + px * char_w
+                                y_local = -(char_index * line_gap) + py * height
+                            x_local *= fit_x_scale
                             if mirrored_x:
                                 x_local = -x_local
                             if mirrored_y:
@@ -2141,7 +2166,8 @@ class DwgServiceCore:
                                     "subtype": "shx_outline",
                                 }
                             )
-                x_cursor += advance
+                if not text_vertical:
+                    x_cursor += advance
         return outlines
 
     def _primitive_build_context(self) -> PrimitiveBuildContext:

@@ -36,7 +36,7 @@ function pickLocalEntity(
 }
 
 export function useCadSelection(input: UseCadSelectionInput): UseCadSelectionResult {
-  const { docId, docIdRef, currentSpace, entityById, engineRef, viewportRef, didDragRef, focusBbox } = input;
+  const { docId, docIdRef, currentSpace, entityById, engineRef, viewportRef, didDragRef } = input;
 
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [selectedEntityRecord, setSelectedEntityRecord] = useState<Record<string, unknown> | null>(null);
@@ -95,9 +95,6 @@ export function useCadSelection(input: UseCadSelectionInput): UseCadSelectionRes
       if (localHit?.id) {
         setSelectedEntityId(localHit.id);
         setSelectedEntityRecord(localHit as unknown as Record<string, unknown>);
-        if (localHit.bbox) {
-          focusBbox({ min: localHit.bbox.min, max: localHit.bbox.max });
-        }
       }
 
       try {
@@ -113,10 +110,6 @@ export function useCadSelection(input: UseCadSelectionInput): UseCadSelectionRes
         if (first.entity_id === localHit?.id) return;
 
         setSelectedEntityId(first.entity_id);
-        const hit = entityById.get(first.entity_id);
-        if (hit?.bbox) {
-          focusBbox({ min: hit.bbox.min, max: hit.bbox.max });
-        }
       } catch {
         // ignore picking errors
       }
@@ -126,7 +119,7 @@ export function useCadSelection(input: UseCadSelectionInput): UseCadSelectionRes
     return () => {
       viewport.removeEventListener('click', onClick);
     };
-  }, [currentSpace, didDragRef, docIdRef, engineRef, entityById, focusBbox, viewportRef]);
+  }, [currentSpace, didDragRef, docIdRef, engineRef, entityById, viewportRef]);
 
   return {
     selectedEntityId,

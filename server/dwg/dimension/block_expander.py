@@ -45,20 +45,38 @@ def collect_dimension_block_primitives(
             return []
         return [p for p in raw_points if isinstance(p, dict)]
 
-    def _polyline_width_value(primitive: Dict[str, object]) -> Optional[float]:
-        values: List[float] = []
-        for key in ("global_width", "start_width", "end_width"):
-            raw_value = primitive.get(key)
-            if isinstance(raw_value, (int, float)) and math.isfinite(float(raw_value)) and float(raw_value) > 0:
-                values.append(float(raw_value))
-        if not values:
-            return None
-        return max(values)
+    def _non_negative_width(value: object) -> Optional[float]:
+        if isinstance(value, (int, float)) and math.isfinite(float(value)) and float(value) >= 0:
+            return float(value)
+        return None
+
+    def _polyline_segment_width_map(primitive: Dict[str, object]) -> Dict[int, Tuple[float, float]]:
+        out: Dict[int, Tuple[float, float]] = {}
+        segment_widths = primitive.get("segment_widths")
+        if not isinstance(segment_widths, list):
+            return out
+        for fallback_index, item in enumerate(segment_widths):
+            if not isinstance(item, dict):
+                continue
+            raw_index = item.get("segment")
+            index = int(raw_index) if isinstance(raw_index, (int, float)) and math.isfinite(float(raw_index)) else fallback_index
+            start_width = _non_negative_width(item.get("start_width"))
+            end_width = _non_negative_width(item.get("end_width"))
+            if start_width is None and end_width is None:
+                continue
+            if start_width is None:
+                start_width = end_width
+            if end_width is None:
+                end_width = start_width
+            if start_width is not None and end_width is not None:
+                out[index] = (start_width, end_width)
+        return out
 
     def _segment_width_polygon(
         start: Dict[str, float],
         end: Dict[str, float],
-        width: float,
+        start_width: float,
+        end_width: float,
     ) -> Optional[List[Dict[str, float]]]:
         sx = float(start.get("x", 0.0))
         sy = float(start.get("y", 0.0))
@@ -67,18 +85,21 @@ def collect_dimension_block_primitives(
         dx = ex - sx
         dy = ey - sy
         seg_len = math.hypot(dx, dy)
-        if seg_len <= 1e-9 or width <= 0:
+        if seg_len <= 1e-9 or max(start_width, end_width) <= 0:
             return None
-        half_width = width * 0.5
-        nx = -dy / seg_len * half_width
-        ny = dx / seg_len * half_width
+        start_half_width = start_width * 0.5
+        end_half_width = end_width * 0.5
+        nx_start = -dy / seg_len * start_half_width
+        ny_start = dx / seg_len * start_half_width
+        nx_end = -dy / seg_len * end_half_width
+        ny_end = dx / seg_len * end_half_width
         z = float(start.get("z", end.get("z", 0.0)))
         return [
-            {"x": sx + nx, "y": sy + ny, "z": z},
-            {"x": ex + nx, "y": ey + ny, "z": float(end.get("z", z))},
-            {"x": ex - nx, "y": ey - ny, "z": float(end.get("z", z))},
-            {"x": sx - nx, "y": sy - ny, "z": z},
-            {"x": sx + nx, "y": sy + ny, "z": z},
+            {"x": sx + nx_start, "y": sy + ny_start, "z": z},
+            {"x": ex + nx_end, "y": ey + ny_end, "z": float(end.get("z", z))},
+            {"x": ex - nx_end, "y": ey - ny_end, "z": float(end.get("z", z))},
+            {"x": sx - nx_start, "y": sy - ny_start, "z": z},
+            {"x": sx + nx_start, "y": sy + ny_start, "z": z},
         ]
 
     def _polygon_area(points: List[Dict[str, float]]) -> float:
@@ -120,15 +141,47 @@ def collect_dimension_block_primitives(
             return []
         converted: List[Dict[str, object]] = []
 
-        width = _polyline_width_value(primitive)
-        if isinstance(width, float) and width > 0:
+        explicit_start_width = _non_negative_width(primitive.get("start_width"))
+        explicit_end_width = _non_negative_width(primitive.get("end_width"))
+        has_endpoint_width = explicit_start_width is not None or explicit_end_width is not None
+        global_width = (
+            _non_negative_width(primitive.get("global_width"))
+            if not has_endpoint_width
+            else None
+        )
+        segment_width_map = _polyline_segment_width_map(primitive)
+        start_width = explicit_start_width if explicit_start_width is not None else float(global_width or 0.0)
+        end_width = explicit_end_width if explicit_end_width is not None else start_width
+        if max(start_width, end_width, float(global_width or 0.0)) > 0 or segment_width_map:
             segment_count = len(points) - 1
             if bool(primitive.get("closed", False)) and context.point_distance(points[0], points[-1]) > 1e-6:
                 segment_count = len(points)
+            lengths: List[float] = []
+            total_length = 0.0
             for idx in range(segment_count):
                 seg_start = points[idx]
                 seg_end = points[(idx + 1) % len(points)]
-                ring = _segment_width_polygon(seg_start, seg_end, width)
+                length = context.point_distance(seg_start, seg_end)
+                lengths.append(length)
+                total_length += max(0.0, length)
+            length_before = 0.0
+            for idx in range(segment_count):
+                seg_start = points[idx]
+                seg_end = points[(idx + 1) % len(points)]
+                seg_len = lengths[idx] if idx < len(lengths) else context.point_distance(seg_start, seg_end)
+                explicit_segment_width = segment_width_map.get(idx)
+                if explicit_segment_width is not None:
+                    seg_start_width, seg_end_width = explicit_segment_width
+                elif global_width is not None and global_width > 0:
+                    seg_start_width = global_width
+                    seg_end_width = global_width
+                else:
+                    start_t = length_before / total_length if total_length > 1e-9 else 0.0
+                    end_t = (length_before + seg_len) / total_length if total_length > 1e-9 else 1.0
+                    seg_start_width = start_width + (end_width - start_width) * start_t
+                    seg_end_width = start_width + (end_width - start_width) * end_t
+                length_before += max(0.0, seg_len)
+                ring = _segment_width_polygon(seg_start, seg_end, seg_start_width, seg_end_width)
                 if not ring:
                     continue
                 wide_polygon = _clone_primitive_style(
@@ -137,7 +190,8 @@ def collect_dimension_block_primitives(
                     conversion="wide_polyline",
                 )
                 wide_polygon["rings"] = [ring]
-                wide_polygon["polyline_width"] = width
+                wide_polygon["polyline_start_width"] = seg_start_width
+                wide_polygon["polyline_end_width"] = seg_end_width
                 converted.append(wide_polygon)
 
         if bool(primitive.get("closed", False)) and len(points) >= 3:

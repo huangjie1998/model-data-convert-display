@@ -121,7 +121,6 @@ export function CadSidebar(props: CadSidebarProps) {
                     }
                     if (!entityId) return;
                     onSelectEntity(entityId);
-                    if (row.node.bbox) onFocusBbox(row.node.bbox);
                   }}
                 >
                   {row.hasChildren ? (

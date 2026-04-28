@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   closeDwgDocument,
   listDwgEntities,
@@ -30,6 +30,34 @@ const ENTITY_FETCH_PAGE_SIZE = (() => {
   return Math.max(1000, Math.min(100000, Math.floor(raw)));
 })();
 
+interface LoadedSpaceData {
+  spaceId: string;
+  entities: DwgEntityLite[];
+  nodes: DwgHierarchyNode[];
+  warnings: string[];
+  treeConsistency: TreeConsistencyDiagnostics;
+}
+
+interface RetainedDwgSession {
+  key: string;
+  docId: string;
+  spaces: DwgSpace[];
+  currentSpace: string;
+  loadedSpace: LoadedSpaceData;
+  baseWarnings: string[];
+  orderSignatureBySpace: Map<string, string>;
+  closeTimer: number | null;
+}
+
+interface InFlightDwgOpen {
+  key: string;
+  promise: Promise<RetainedDwgSession>;
+}
+
+let retainedDwgSession: RetainedDwgSession | null = null;
+let inFlightDwgOpen: InFlightDwgOpen | null = null;
+const RETAINED_SESSION_CLOSE_DELAY_MS = 3000;
+
 async function safeClose(docId: string | null) {
   if (!docId) return;
   try {
@@ -37,6 +65,12 @@ async function safeClose(docId: string | null) {
   } catch {
     // ignore close errors
   }
+}
+
+function cancelRetainedClose(session: RetainedDwgSession | null) {
+  if (!session?.closeTimer) return;
+  window.clearTimeout(session.closeTimer);
+  session.closeTimer = null;
 }
 
 async function listDwgEntitiesPaged(activeDocId: string, spaceId: string) {
@@ -64,6 +98,120 @@ async function listDwgEntitiesPaged(activeDocId: string, spaceId: string) {
   };
 }
 
+async function loadDwgSpaceData(
+  activeDocId: string,
+  spaceId: string,
+  baseWarnings: string[],
+  orderSignatureBySpace: Map<string, string>
+): Promise<LoadedSpaceData> {
+  const [entitiesResp, hierarchyResp] = await Promise.all([
+    listDwgEntitiesPaged(activeDocId, spaceId),
+    listDwgHierarchy(activeDocId, spaceId),
+  ]);
+
+  const nextEntities = (entitiesResp.entities ?? []).map((entity) => normalizeEntityForViewer(entity, spaceId));
+  const nextNodes = (hierarchyResp.nodes ?? []).map(normalizeHierarchyNode);
+  const mergedWarnings = [...baseWarnings];
+  if (entitiesResp.truncated) {
+    mergedWarnings.push(
+      `Entity list truncated: rendered ${nextEntities.length}/${entitiesResp.total_count}. Increase VITE_DWG_ENTITY_FETCH_LIMIT or backend DWG caps.`
+    );
+  }
+  if (!entitiesResp.truncated && hierarchyResp.total_entity_count > nextEntities.length) {
+    mergedWarnings.push(
+      `Hierarchy/entity mismatch: hierarchy=${hierarchyResp.total_entity_count}, rendered=${nextEntities.length}.`
+    );
+  }
+
+  const consistency = buildTreeConsistencyDiagnostics(nextEntities, nextNodes, spaceId, orderSignatureBySpace);
+  for (const mismatch of consistency.typeMismatches) {
+    mergedWarnings.push(
+      `Type count mismatch ${mismatch.type}: entities=${mismatch.entities}, hierarchy=${mismatch.hierarchy}.`
+    );
+  }
+  for (const mismatch of consistency.subtypeMismatches ?? []) {
+    mergedWarnings.push(
+      `Subtype count mismatch ${mismatch.subtype}: entities=${mismatch.entities}, hierarchy=${mismatch.hierarchy}.`
+    );
+  }
+  if (consistency.missingInTree.length > 0) {
+    const preview = consistency.missingInTree.slice(0, 8).join(', ');
+    mergedWarnings.push(`Hierarchy missing entity IDs (${consistency.missingInTree.length}): ${preview}${consistency.missingInTree.length > 8 ? ', ...' : ''}`);
+  }
+  if (consistency.extraInTree.length > 0) {
+    const preview = consistency.extraInTree.slice(0, 8).join(', ');
+    mergedWarnings.push(`Hierarchy contains unknown entity IDs (${consistency.extraInTree.length}): ${preview}${consistency.extraInTree.length > 8 ? ', ...' : ''}`);
+  }
+  if (consistency.missingRequiredFields.length > 0) {
+    const preview = consistency.missingRequiredFields
+      .slice(0, 4)
+      .map((item) => `${item.nodeId}[${item.missing.join('/')}]`)
+      .join(', ');
+    mergedWarnings.push(
+      `Hierarchy nodes missing required fields (${consistency.missingRequiredFields.length}): ${preview}${consistency.missingRequiredFields.length > 4 ? ', ...' : ''}`
+    );
+  }
+  if (!consistency.orderStable) {
+    mergedWarnings.push('Hierarchy leaf order changed for same space during session.');
+  }
+
+  return {
+    spaceId,
+    entities: nextEntities,
+    nodes: nextNodes,
+    warnings: mergedWarnings,
+    treeConsistency: consistency,
+  };
+}
+
+async function openDwgSessionForFile(rawFile: File, key: string): Promise<RetainedDwgSession> {
+  if (retainedDwgSession?.key === key) {
+    cancelRetainedClose(retainedDwgSession);
+    return retainedDwgSession;
+  }
+  if (inFlightDwgOpen?.key === key) {
+    return inFlightDwgOpen.promise;
+  }
+
+  const promise = (async () => {
+    if (retainedDwgSession && retainedDwgSession.key !== key) {
+      cancelRetainedClose(retainedDwgSession);
+      await safeClose(retainedDwgSession.docId);
+      retainedDwgSession = null;
+    }
+
+    const opened = await openDwgDocument(rawFile);
+    const spaces = Array.isArray(opened.spaces) ? opened.spaces : [];
+    const listed = await listDwgSpaces(opened.doc_id).catch(() => null);
+    const effectiveSpaces = listed?.spaces?.length ? listed.spaces : spaces;
+    const nextSpace = opened.current_space || opened.spaces?.[0]?.id || 'model';
+    const baseWarnings = Array.isArray(opened.warnings) ? opened.warnings : [];
+    const orderSignatureBySpace = new Map<string, string>();
+    const loadedSpace = await loadDwgSpaceData(opened.doc_id, nextSpace, baseWarnings, orderSignatureBySpace);
+    const session: RetainedDwgSession = {
+      key,
+      docId: opened.doc_id,
+      spaces: effectiveSpaces,
+      currentSpace: nextSpace,
+      loadedSpace,
+      baseWarnings,
+      orderSignatureBySpace: new Map(orderSignatureBySpace),
+      closeTimer: null,
+    };
+    retainedDwgSession = session;
+    return session;
+  })();
+
+  inFlightDwgOpen = { key, promise };
+  try {
+    return await promise;
+  } finally {
+    if (inFlightDwgOpen?.key === key) {
+      inFlightDwgOpen = null;
+    }
+  }
+}
+
 export function useCadDocumentLifecycle(input: UseCadDocumentLifecycleInput): UseCadDocumentLifecycleResult {
   const {
     rawFile,
@@ -89,80 +237,74 @@ export function useCadDocumentLifecycle(input: UseCadDocumentLifecycleInput): Us
   const [treeConsistency, setTreeConsistency] = useState<TreeConsistencyDiagnostics | null>(null);
   const baseWarningsRef = useRef<string[]>([]);
   const orderSignatureBySpaceRef = useRef<Map<string, string>>(new Map());
+  const rawFileKey = useMemo(
+    () => (rawFile ? `${rawFile.name}|${rawFile.size}|${rawFile.lastModified}` : ''),
+    [rawFile]
+  );
+  const loadedFileKeyRef = useRef<string>('');
 
-  const loadSpace = useCallback(async (activeDocId: string, spaceId: string) => {
+  const loadSpace = useCallback(async (activeDocId: string, spaceId: string): Promise<LoadedSpaceData | null> => {
     setLoading(true);
     onError(null);
 
     try {
-      const [entitiesResp, hierarchyResp] = await Promise.all([
-        listDwgEntitiesPaged(activeDocId, spaceId),
-        listDwgHierarchy(activeDocId, spaceId),
-      ]);
-
-      const nextEntities = (entitiesResp.entities ?? []).map((entity) => normalizeEntityForViewer(entity, spaceId));
-      const nextNodes = (hierarchyResp.nodes ?? []).map(normalizeHierarchyNode);
-      const mergedWarnings = [...baseWarningsRef.current];
-      if (entitiesResp.truncated) {
-        mergedWarnings.push(
-          `Entity list truncated: rendered ${nextEntities.length}/${entitiesResp.total_count}. Increase VITE_DWG_ENTITY_FETCH_LIMIT or backend DWG caps.`
-        );
-      }
-      if (!entitiesResp.truncated && hierarchyResp.total_entity_count > nextEntities.length) {
-        mergedWarnings.push(
-          `Hierarchy/entity mismatch: hierarchy=${hierarchyResp.total_entity_count}, rendered=${nextEntities.length}.`
-        );
-      }
-
-      const consistency = buildTreeConsistencyDiagnostics(nextEntities, nextNodes, spaceId, orderSignatureBySpaceRef.current);
-      for (const mismatch of consistency.typeMismatches) {
-        mergedWarnings.push(
-          `Type count mismatch ${mismatch.type}: entities=${mismatch.entities}, hierarchy=${mismatch.hierarchy}.`
-        );
-      }
-      for (const mismatch of consistency.subtypeMismatches ?? []) {
-        mergedWarnings.push(
-          `Subtype count mismatch ${mismatch.subtype}: entities=${mismatch.entities}, hierarchy=${mismatch.hierarchy}.`
-        );
-      }
-      if (consistency.missingInTree.length > 0) {
-        const preview = consistency.missingInTree.slice(0, 8).join(', ');
-        mergedWarnings.push(`Hierarchy missing entity IDs (${consistency.missingInTree.length}): ${preview}${consistency.missingInTree.length > 8 ? ', ...' : ''}`);
-      }
-      if (consistency.extraInTree.length > 0) {
-        const preview = consistency.extraInTree.slice(0, 8).join(', ');
-        mergedWarnings.push(`Hierarchy contains unknown entity IDs (${consistency.extraInTree.length}): ${preview}${consistency.extraInTree.length > 8 ? ', ...' : ''}`);
-      }
-      if (consistency.missingRequiredFields.length > 0) {
-        const preview = consistency.missingRequiredFields
-          .slice(0, 4)
-          .map((item) => `${item.nodeId}[${item.missing.join('/')}]`)
-          .join(', ');
-        mergedWarnings.push(
-          `Hierarchy nodes missing required fields (${consistency.missingRequiredFields.length}): ${preview}${consistency.missingRequiredFields.length > 4 ? ', ...' : ''}`
-        );
-      }
-      if (!consistency.orderStable) {
-        mergedWarnings.push('Hierarchy leaf order changed for same space during session.');
-      }
-      setEntities(nextEntities);
-      setNodes(nextNodes);
-      setTreeConsistency(consistency);
-      setWarnings(mergedWarnings);
-      onResetExpandedIds(collectDefaultExpanded(nextNodes));
+      const loaded = await loadDwgSpaceData(activeDocId, spaceId, baseWarningsRef.current, orderSignatureBySpaceRef.current);
+      setEntities(loaded.entities);
+      setNodes(loaded.nodes);
+      setTreeConsistency(loaded.treeConsistency);
+      setWarnings(loaded.warnings);
+      onResetExpandedIds(collectDefaultExpanded(loaded.nodes));
       setCurrentSpace(spaceId);
       onResetHiddenEntityIds();
       onClearSelection();
+      if (retainedDwgSession?.docId === activeDocId) {
+        retainedDwgSession = {
+          ...retainedDwgSession,
+          currentSpace: spaceId,
+          loadedSpace: loaded,
+          orderSignatureBySpace: new Map(orderSignatureBySpaceRef.current),
+        };
+      }
+      return loaded;
     } catch (loadError) {
       onError(loadError instanceof Error ? loadError.message : 'Failed to load DWG space data');
+      return null;
     } finally {
       setLoading(false);
     }
   }, [onClearSelection, onError, onResetExpandedIds, onResetHiddenEntityIds]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const applySession = (session: RetainedDwgSession) => {
+      if (cancelled) return;
+      cancelRetainedClose(session);
+      docIdRef.current = session.docId;
+      loadedFileKeyRef.current = session.key;
+      setDocId(session.docId);
+      setSpaces(session.spaces);
+      setCurrentSpace(session.currentSpace);
+      setEntities(session.loadedSpace.entities);
+      setNodes(session.loadedSpace.nodes);
+      setWarnings(session.loadedSpace.warnings);
+      setTreeConsistency(session.loadedSpace.treeConsistency);
+      baseWarningsRef.current = session.baseWarnings;
+      orderSignatureBySpaceRef.current = new Map(session.orderSignatureBySpace);
+      onResetExpandedIds(collectDefaultExpanded(session.loadedSpace.nodes));
+      onResetHiddenLayerNames();
+      onResetHiddenEntityIds();
+      onClearSelection();
+    };
+
     const run = async () => {
       if (!rawFile) {
+        if (retainedDwgSession) {
+          cancelRetainedClose(retainedDwgSession);
+          void safeClose(retainedDwgSession.docId);
+          retainedDwgSession = null;
+        }
+        loadedFileKeyRef.current = '';
         sceneReadyRef.current = false;
         revokeSceneBlobUrls();
         apiRef.current?.purgeModel?.();
@@ -183,6 +325,16 @@ export function useCadDocumentLifecycle(input: UseCadDocumentLifecycleInput): Us
         return;
       }
 
+      if (loadedFileKeyRef.current === rawFileKey && docIdRef.current) {
+        return;
+      }
+
+      if (retainedDwgSession?.key === rawFileKey) {
+        applySession(retainedDwgSession);
+        setLoading(false);
+        return;
+      }
+
       if (!rawFile.name.toLowerCase().endsWith('.dwg')) {
         onError('Only .dwg is supported in this viewer');
         return;
@@ -194,44 +346,41 @@ export function useCadDocumentLifecycle(input: UseCadDocumentLifecycleInput): Us
       try {
         sceneReadyRef.current = false;
         revokeSceneBlobUrls();
-        if (docIdRef.current) {
+        if (docIdRef.current && retainedDwgSession?.docId !== docIdRef.current) {
           await closeDwgDocument(docIdRef.current).catch(() => undefined);
         }
 
-        const opened = await openDwgDocument(rawFile);
-        docIdRef.current = opened.doc_id;
-        setDocId(opened.doc_id);
-        onResetHiddenLayerNames();
-        orderSignatureBySpaceRef.current.clear();
-        baseWarningsRef.current = Array.isArray(opened.warnings) ? opened.warnings : [];
-        setWarnings(baseWarningsRef.current);
-        setTreeConsistency(null);
-        setSpaces(Array.isArray(opened.spaces) ? opened.spaces : []);
-
-        const listed = await listDwgSpaces(opened.doc_id).catch(() => null);
-        if (listed?.spaces?.length) {
-          setSpaces(listed.spaces);
-        }
-
-        const nextSpace = opened.current_space || opened.spaces?.[0]?.id || 'model';
-        await loadSpace(opened.doc_id, nextSpace);
+        const session = await openDwgSessionForFile(rawFile, rawFileKey);
+        applySession(session);
       } catch (openError) {
-        onError(openError instanceof Error ? openError.message : 'Failed to open DWG');
+        if (!cancelled) onError(openError instanceof Error ? openError.message : 'Failed to open DWG');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     void run();
 
     return () => {
-      if (docIdRef.current) {
-        void safeClose(docIdRef.current);
+      cancelled = true;
+      const closingDocId = docIdRef.current;
+      const closingKey = loadedFileKeyRef.current;
+      if (closingDocId && retainedDwgSession?.docId === closingDocId && retainedDwgSession.key === closingKey) {
+        cancelRetainedClose(retainedDwgSession);
+        retainedDwgSession.closeTimer = window.setTimeout(() => {
+          if (retainedDwgSession?.docId === closingDocId) {
+            void safeClose(closingDocId);
+            retainedDwgSession = null;
+          }
+        }, RETAINED_SESSION_CLOSE_DELAY_MS);
+      } else if (closingDocId) {
+        void safeClose(closingDocId);
       }
+      loadedFileKeyRef.current = '';
       sceneReadyRef.current = false;
       revokeSceneBlobUrls();
     };
-  }, [apiRef, loadSpace, onClearSelection, onError, onResetExpandedIds, onResetHiddenLayerNames, rawFile, revokeSceneBlobUrls, sceneReadyRef]);
+  }, [rawFileKey]);
 
   return {
     loading,

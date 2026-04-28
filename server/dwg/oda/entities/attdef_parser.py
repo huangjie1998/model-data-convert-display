@@ -4,6 +4,7 @@ import math
 from typing import Dict
 
 from server.dwg.oda.entities.common import NOT_HANDLED
+from server.dwg.oda.entities.text_extents import apply_text_extents_to_geom
 
 
 def build_attdef_entity(state: Dict[str, object], context) -> Dict[str, object] | None | object:
@@ -20,6 +21,7 @@ def _build_attribute_text_entity(state: Dict[str, object], context, entity_type:
     bbox = state.get("bbox")
     text_height = state.get("text_height")
     text_width = state.get("text_width")
+    actual_width = state.get("actual_width")
     background_fill_on = state.get("mtext_background_fill_on")
     background_fill_color_raw = state.get("mtext_background_fill_color_raw")
     background_scale_factor = state.get("mtext_background_scale_factor")
@@ -32,6 +34,40 @@ def _build_attribute_text_entity(state: Dict[str, object], context, entity_type:
         height = float(text_height or 100.0)
         width = float(text_width or max(height * 0.5, len(str(text)) * height * 0.55))
         bbox = {"min": {"x": pos["x"], "y": pos["y"] - height, "z": pos.get("z", 0.0)}, "max": {"x": pos["x"] + width, "y": pos["y"], "z": pos.get("z", 0.0)}}
+    geom = {
+        "text": context.clean_oda_text_value(text),
+        "position": pos,
+        "height": float(text_height or 100.0),
+        "rotation": float(state.get("rotation_deg") or 0.0),
+        "width": float(text_width or 0.0),
+        "actual_width": float(actual_width or text_width or 0.0),
+        "width_factor": float(state.get("width_factor") or 1.0),
+        "is_mtext": False,
+        "style_name": state.get("text_style_name"),
+        "horizontal_mode": state.get("horizontal_mode"),
+        "vertical_mode": state.get("vertical_mode"),
+        "text_vertical": bool(state.get("text_vertical")),
+        "attachment": state.get("attachment_mode"),
+        "oblique": float(state.get("oblique_angle") or 0.0),
+        "actual_height": float(state.get("actual_height") or text_height or 0.0),
+        "mirrored_x": bool(state.get("mirrored_x")),
+        "mirrored_y": bool(state.get("mirrored_y")),
+        "is_attribute": True,
+        "attribute_kind": entity_type,
+        "text_mask": bool(background_fill_on) if background_fill_on is not None else False,
+        "text_mask_padding": (
+            float(background_scale_factor)
+            if isinstance(background_scale_factor, (int, float))
+            and math.isfinite(float(background_scale_factor))
+            and float(background_scale_factor) > 0
+            else 0.25
+        ),
+        "text_mask_color": context.resolve_rgb_color_decimal(background_fill_color_raw) if background_fill_color_raw is not None else None,
+    }
+    if actual_width:
+        geom["text_extents_source"] = "oda_actual_width"
+    if state.get("bbox") is not None:
+        apply_text_extents_to_geom(geom, bbox, source="oda_bbox")
     return {
         "id": state.get("handle"),
         "type": entity_type,
@@ -40,34 +76,7 @@ def _build_attribute_text_entity(state: Dict[str, object], context, entity_type:
         "semantic_type": "text",
         "semantic_subtype": entity_type,
         "source_acdb_type": source_type,
-        "geom": {
-            "text": context.clean_oda_text_value(text),
-            "position": pos,
-            "height": float(text_height or 100.0),
-            "rotation": float(state.get("rotation_deg") or 0.0),
-            "width": float(text_width or 0.0),
-            "width_factor": float(state.get("width_factor") or 1.0),
-            "is_mtext": False,
-            "style_name": state.get("text_style_name"),
-            "horizontal_mode": state.get("horizontal_mode"),
-            "vertical_mode": state.get("vertical_mode"),
-            "attachment": state.get("attachment_mode"),
-            "oblique": float(state.get("oblique_angle") or 0.0),
-            "actual_height": float(state.get("actual_height") or text_height or 0.0),
-            "mirrored_x": bool(state.get("mirrored_x")),
-            "mirrored_y": bool(state.get("mirrored_y")),
-            "is_attribute": True,
-            "attribute_kind": entity_type,
-            "text_mask": bool(background_fill_on) if background_fill_on is not None else False,
-            "text_mask_padding": (
-                float(background_scale_factor)
-                if isinstance(background_scale_factor, (int, float))
-                and math.isfinite(float(background_scale_factor))
-                and float(background_scale_factor) > 0
-                else 0.25
-            ),
-            "text_mask_color": context.resolve_rgb_color_decimal(background_fill_color_raw) if background_fill_color_raw is not None else None,
-        },
+        "geom": geom,
         "style": state.get("style_obj"),
         "bbox": bbox,
     }

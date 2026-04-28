@@ -12,12 +12,17 @@ def build_polyline_primitives(geom: Geom) -> List[Primitive]:
         return []
 
     poly_obj: Primitive = {"kind": "polyline", "points": clean, "closed": bool(geom.get("closed", False))}
+    segment_widths = geom.get("segment_widths")
+    if isinstance(segment_widths, list):
+        clean_segment_widths = [item for item in segment_widths if isinstance(item, dict)]
+        if clean_segment_widths:
+            poly_obj["segment_widths"] = clean_segment_widths
     for source_key, target_key in (
         ("start_width", "start_width"),
         ("end_width", "end_width"),
         ("global_width", "global_width"),
     ):
         value = geom.get(source_key)
-        if isinstance(value, (int, float)) and math.isfinite(float(value)) and float(value) > 0:
+        if isinstance(value, (int, float)) and math.isfinite(float(value)) and float(value) >= 0:
             poly_obj[target_key] = float(value)
     return [poly_obj]

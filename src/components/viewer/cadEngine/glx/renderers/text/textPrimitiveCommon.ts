@@ -43,13 +43,15 @@ export function renderClassifiedTextPrimitive(
         ? actualHeight
         : undefined;
   const height = Math.max(1, toNumber(isMText ? resolvedMTextHeight : (actualHeight ?? declaredHeight), 120));
-  const width = toNumber(
-    parseFiniteNumber(record.width) ??
-      parseFiniteNumber(record.actual_width) ??
-      parseFiniteNumber(record.defined_width) ??
-      parseFiniteNumber(record.text_width),
-    0
-  );
+  const width = isMText
+    ? 0
+    : toNumber(
+        parseFiniteNumber(record.actual_width) ??
+          parseFiniteNumber(record.width) ??
+          parseFiniteNumber(record.defined_width) ??
+          parseFiniteNumber(record.text_width),
+        0
+      );
   const rotation = toRadians(toNumber(parseFiniteNumber(record.rotation), 0));
   const widthFactor = toNumber(parseFiniteNumber(record.width_factor), 1);
   const oblique = toNumber(parseFiniteNumber(record.oblique), 0);
@@ -86,6 +88,7 @@ export function renderClassifiedTextPrimitive(
       oblique,
       horizontal_mode: String(record.horizontal_mode ?? ''),
       vertical_mode: String(record.vertical_mode ?? ''),
+      text_vertical: record.text_vertical === true,
       attachment: String(record.attachment ?? ''),
       mirrored_x: record.mirrored_x === true,
       mirrored_y: record.mirrored_y === true,

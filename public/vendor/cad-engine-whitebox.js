@@ -30856,6 +30856,7 @@ void main() {
       textMaskUseCanvasBg: toBooleanValue(extras.text_mask_use_canvas_bg),
       horizontalMode: toStringValue(extras.horizontal_mode),
       verticalMode: toStringValue(extras.vertical_mode),
+      verticalText: toBooleanValue(extras.text_vertical),
       attachment: toStringValue(extras.attachment),
       subtype: toStringValue(extras.subtype),
       fontKey: toStringValue(extras.font_key),
@@ -31105,6 +31106,38 @@ void main() {
       return { kind, lines: layoutMText(text, textPayload, advanceFn) };
     }
     return { kind, lines: layoutSingleLineText(text, textPayload, advanceFn) };
+  }
+
+  // src/vendor/cad-engine-whitebox/runtime/scene/textScaleStrategy.js
+  function textHorizontalScaleFromTargetWidth(bbox, textPayload) {
+    const widthFactor = safeWidthFactor(textPayload == null ? void 0 : textPayload.widthFactor);
+    const rotation = toFiniteNumber(textPayload == null ? void 0 : textPayload.rotation, 0);
+    const isSideways = Math.abs(Math.sin(rotation)) > 0.985;
+    if (isDimensionTextPayload(textPayload) || (textPayload == null ? void 0 : textPayload.isMText) === true || (textPayload == null ? void 0 : textPayload.verticalText) === true || isSideways) {
+      return widthFactor;
+    }
+    const targetWidth = toFiniteNumber(textPayload == null ? void 0 : textPayload.width, 0);
+    if (!Number.isFinite(targetWidth) || targetWidth <= 1e-6 || !bbox || bbox.isEmpty()) {
+      return widthFactor;
+    }
+    const naturalWidth = Math.max(0, bbox.max.x - bbox.min.x);
+    if (!Number.isFinite(naturalWidth) || naturalWidth <= 1e-6) {
+      return widthFactor;
+    }
+    return Math.max(1e-6, Math.min(1e3, targetWidth / naturalWidth));
+  }
+  function textCanvasWidthFactorFromTargetWidth(textPayload, measuredPixelWidth, pixelToWorld) {
+    const widthFactor = safeWidthFactor(textPayload == null ? void 0 : textPayload.widthFactor);
+    const rotation = toFiniteNumber(textPayload == null ? void 0 : textPayload.rotation, 0);
+    const isSideways = Math.abs(Math.sin(rotation)) > 0.985;
+    if (isDimensionTextPayload(textPayload) || (textPayload == null ? void 0 : textPayload.isMText) === true || (textPayload == null ? void 0 : textPayload.verticalText) === true || isSideways) {
+      return widthFactor;
+    }
+    const targetWidth = toFiniteNumber(textPayload == null ? void 0 : textPayload.width, 0);
+    if (!Number.isFinite(targetWidth) || targetWidth <= 1e-6 || !Number.isFinite(measuredPixelWidth) || measuredPixelWidth <= 1e-6 || !Number.isFinite(pixelToWorld) || pixelToWorld <= 1e-9) {
+      return widthFactor;
+    }
+    return Math.max(1e-6, Math.min(1e3, targetWidth / (measuredPixelWidth * pixelToWorld)));
   }
 
   // src/vendor/cad-engine-whitebox/runtime/scene/Scene3D.js
@@ -31533,7 +31566,7 @@ void main() {
     _textAnchorBBox(bbox, textPayload) {
       if (!bbox || typeof bbox.clone !== "function") return bbox;
       const box = bbox.clone();
-      const width = toFiniteNumber(textPayload == null ? void 0 : textPayload.width, 0);
+      const width = (textPayload == null ? void 0 : textPayload.isMText) === true ? 0 : toFiniteNumber(textPayload == null ? void 0 : textPayload.width, 0);
       const isMText = (textPayload == null ? void 0 : textPayload.isMText) === true;
       if (isMText && Number.isFinite(width) && width > 1e-6) {
         const widthFactor = safeWidthFactor(textPayload == null ? void 0 : textPayload.widthFactor);
@@ -31545,6 +31578,9 @@ void main() {
     _textLines(textPayload) {
       const text = normalizeCadTextForDisplay(textPayload == null ? void 0 : textPayload.text);
       if (!text) return [];
+      if ((textPayload == null ? void 0 : textPayload.verticalText) === true) {
+        return [...this._sanitizeTextForFont(text)].filter((char) => char !== "\n");
+      }
       return this._wrapTextToWidth(this._sanitizeTextForFont(text), textPayload);
     }
     _shxCodeForChar(char) {
@@ -31683,8 +31719,11 @@ void main() {
     _shxTextLines(textPayload) {
       const text = normalizeCadTextForDisplay(textPayload == null ? void 0 : textPayload.text);
       if (!text) return [];
+      if ((textPayload == null ? void 0 : textPayload.verticalText) === true) {
+        return [...text].filter((char) => char !== "\n");
+      }
       const lines = this._wrapTextToWidth(text, textPayload, (line) => this._shxTextLineAdvance(line, textPayload, false));
-      const width = toFiniteNumber(textPayload == null ? void 0 : textPayload.width, 0);
+      const width = (textPayload == null ? void 0 : textPayload.isMText) === true ? 0 : toFiniteNumber(textPayload == null ? void 0 : textPayload.width, 0);
       if ((textPayload == null ? void 0 : textPayload.isMText) === true && width > 1e-6) {
         this._textDiagnostics.mtextDefinedWidthCount += 1;
         this._textDiagnostics.mtextWrappedLineCount += lines.length;
@@ -31742,11 +31781,11 @@ void main() {
       }
       const anchor = this._textAnchorFromBBox(this._textAnchorBBox(geometry.boundingBox, textPayload), textPayload);
       geometry.translate(-anchor.x, -anchor.y, 0);
-      const widthFactor = safeWidthFactor(textPayload.widthFactor);
+      const horizontalScale = textHorizontalScaleFromTargetWidth(geometry.boundingBox, textPayload);
       const mirrorX = textPayload.mirroredX === true ? -1 : 1;
       const mirrorY = textPayload.mirroredY === true ? -1 : 1;
       const shear = Math.tan(normalizeObliqueToRadians(textPayload.oblique));
-      const scaleMatrix = new Matrix4().makeScale(widthFactor * mirrorX, mirrorY, 1);
+      const scaleMatrix = new Matrix4().makeScale(horizontalScale * mirrorX, mirrorY, 1);
       geometry.applyMatrix4(scaleMatrix);
       geometry.applyMatrix4(makeShearMatrix(shear));
       geometry.computeBoundingBox();
@@ -31821,11 +31860,11 @@ void main() {
       }
       const anchor = this._textAnchorFromBBox(this._textAnchorBBox(geometry.boundingBox, textPayload), textPayload);
       geometry.translate(-anchor.x, -anchor.y, 0);
-      const widthFactor = safeWidthFactor(textPayload.widthFactor);
+      const horizontalScale = textHorizontalScaleFromTargetWidth(geometry.boundingBox, textPayload);
       const mirrorX = textPayload.mirroredX === true ? -1 : 1;
       const mirrorY = textPayload.mirroredY === true ? -1 : 1;
       const shear = Math.tan(normalizeObliqueToRadians(textPayload.oblique));
-      const scaleMatrix = new Matrix4().makeScale(widthFactor * mirrorX, mirrorY, 1);
+      const scaleMatrix = new Matrix4().makeScale(horizontalScale * mirrorX, mirrorY, 1);
       geometry.applyMatrix4(scaleMatrix);
       geometry.applyMatrix4(makeShearMatrix(shear));
       geometry.computeBoundingBox();
@@ -31910,7 +31949,6 @@ void main() {
       const lines = text.split("\n");
       const fontPx = Math.max(12, Math.min(256, Math.round(textPayload.height)));
       const lineHeightPx = Math.ceil(fontPx * TEXT_LINE_HEIGHT_FACTOR);
-      const widthFactor = safeWidthFactor(textPayload.widthFactor);
       const shear = Math.tan(normalizeObliqueToRadians(textPayload.oblique));
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
@@ -31920,7 +31958,9 @@ void main() {
       for (let i = 0; i < lines.length; i += 1) {
         maxLineWidth = Math.max(maxLineWidth, ctx.measureText(lines[i] || " ").width);
       }
-      const textWidthPx = Math.max(1, maxLineWidth * widthFactor);
+      const pixelToWorld = textPayload.height / fontPx;
+      const effectiveWidthFactor = textCanvasWidthFactorFromTargetWidth(textPayload, maxLineWidth, pixelToWorld);
+      const textWidthPx = Math.max(1, maxLineWidth * effectiveWidthFactor);
       const textHeightPx = Math.max(fontPx, lineHeightPx * Math.max(1, lines.length));
       const skewPadPx = Math.abs(shear) * textHeightPx;
       const paddingPx = Math.max(4, Math.ceil(fontPx * 0.35));
@@ -31941,7 +31981,7 @@ void main() {
       draw.fillStyle = "#ffffff";
       draw.save();
       draw.translate(paddingPx + (shear < 0 ? skewPadPx : 0), paddingPx + fontPx);
-      draw.transform(widthFactor * (textPayload.mirroredX === true ? -1 : 1), 0, -shear, textPayload.mirroredY === true ? -1 : 1, 0, 0);
+      draw.transform(effectiveWidthFactor * (textPayload.mirroredX === true ? -1 : 1), 0, -shear, textPayload.mirroredY === true ? -1 : 1, 0, 0);
       for (let i = 0; i < lines.length; i += 1) {
         draw.fillText(lines[i] || " ", 0, i * lineHeightPx);
       }
@@ -31957,7 +31997,6 @@ void main() {
         depthTest: false,
         depthWrite: false
       });
-      const pixelToWorld = textPayload.height / fontPx;
       const worldWidth = width * pixelToWorld;
       const worldHeight = height * pixelToWorld;
       const bbox = new Box3(

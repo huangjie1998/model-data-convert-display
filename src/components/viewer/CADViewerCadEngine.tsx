@@ -129,7 +129,6 @@ export function CADViewerCadEngine({ rawFile }: CADViewerCadEngineProps) {
     engineRef,
     viewportRef,
     didDragRef,
-    focusBbox,
   });
   useEffect(() => {
     clearSelectionRef.current = clearSelection;

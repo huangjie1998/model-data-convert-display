@@ -29,12 +29,14 @@ def build_text_primitives(ent: Entity, geom: Geom, context: PrimitiveBuildContex
         "position": position,
         "height": finite_float(geom.get("height"), 100.0),
         "width": finite_float(geom.get("width"), 0.0),
+        "actual_width": finite_float(geom.get("actual_width"), finite_float(geom.get("width"), 0.0)),
         "rotation": finite_float(geom.get("rotation"), 0.0),
         "width_factor": finite_float(geom.get("width_factor"), 1.0),
         "oblique": finite_float(geom.get("oblique"), 0.0),
         "actual_height": finite_float(geom.get("actual_height"), finite_float(geom.get("height"), 100.0)),
         "horizontal_mode": geom.get("horizontal_mode"),
         "vertical_mode": geom.get("vertical_mode"),
+        "text_vertical": bool(geom.get("text_vertical", False)),
         "attachment": geom.get("attachment"),
         "mirrored_x": bool(geom.get("mirrored_x", False)),
         "mirrored_y": bool(geom.get("mirrored_y", False)),
@@ -49,6 +51,7 @@ def build_text_primitives(ent: Entity, geom: Geom, context: PrimitiveBuildContex
         "text_mask": bool(geom.get("text_mask", False)),
         "text_mask_padding": finite_float(geom.get("text_mask_padding"), 0.25),
         "text_mask_color": geom.get("text_mask_color"),
+        "text_extents_source": geom.get("text_extents_source"),
     }
     if text_color:
         primitive["color"] = text_color

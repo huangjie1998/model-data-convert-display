@@ -56,12 +56,30 @@ def transform_entity(ent: Dict[str, object], tf: Affine2D) -> Optional[Dict[str,
             start_w = geom.get("start_width")
             end_w = geom.get("end_width")
             global_w = geom.get("global_width")
-            if isinstance(start_w, (int, float)) and math.isfinite(float(start_w)) and float(start_w) > 0:
+            if isinstance(start_w, (int, float)) and math.isfinite(float(start_w)) and float(start_w) >= 0:
                 transformed_geom["start_width"] = float(start_w) * scale_avg
-            if isinstance(end_w, (int, float)) and math.isfinite(float(end_w)) and float(end_w) > 0:
+            if isinstance(end_w, (int, float)) and math.isfinite(float(end_w)) and float(end_w) >= 0:
                 transformed_geom["end_width"] = float(end_w) * scale_avg
             if isinstance(global_w, (int, float)) and math.isfinite(float(global_w)) and float(global_w) > 0:
                 transformed_geom["global_width"] = float(global_w) * scale_avg
+            segment_widths = geom.get("segment_widths")
+            if isinstance(segment_widths, list):
+                transformed_segments: List[Dict[str, object]] = []
+                for item in segment_widths:
+                    if not isinstance(item, dict):
+                        continue
+                    transformed_item: Dict[str, object] = {}
+                    segment_index = item.get("segment")
+                    if isinstance(segment_index, (int, float)) and math.isfinite(float(segment_index)):
+                        transformed_item["segment"] = int(segment_index)
+                    for source_key in ("start_width", "end_width"):
+                        raw_width = item.get(source_key)
+                        if isinstance(raw_width, (int, float)) and math.isfinite(float(raw_width)) and float(raw_width) >= 0:
+                            transformed_item[source_key] = float(raw_width) * scale_avg
+                    if "start_width" in transformed_item or "end_width" in transformed_item:
+                        transformed_segments.append(transformed_item)
+                if transformed_segments:
+                    transformed_geom["segment_widths"] = transformed_segments
             transformed["geom"] = transformed_geom
             transformed["bbox"] = _bbox_from_points(vertices)
             return transformed
@@ -178,12 +196,25 @@ def transform_entity(ent: Dict[str, object], tf: Affine2D) -> Optional[Dict[str,
             tf_rot = math.degrees(math.atan2(tf[2], tf[0]))
             t_height = max(1e-9, float(geom.get("height", 100.0)) * scale_avg)
             t_width = float(geom.get("width", 0.0)) * scale_avg
+            actual_width_raw = geom.get("actual_width")
+            actual_height_raw = geom.get("actual_height")
+            t_actual_width = (
+                float(actual_width_raw) * scale_avg
+                if isinstance(actual_width_raw, (int, float)) and math.isfinite(float(actual_width_raw)) and float(actual_width_raw) > 0
+                else t_width
+            )
+            t_actual_height = (
+                float(actual_height_raw) * scale_avg
+                if isinstance(actual_height_raw, (int, float)) and math.isfinite(float(actual_height_raw)) and float(actual_height_raw) > 0
+                else t_height
+            )
             transformed["geom"] = {
                 "text": text,
                 "position": t_pos,
                 "height": t_height,
                 "rotation": local_rot + tf_rot,
                 "width": t_width,
+                "actual_width": t_actual_width,
                 "width_factor": float(geom.get("width_factor", 1.0)),
                 "is_mtext": bool(geom.get("is_mtext", False)),
                 "is_attribute": bool(geom.get("is_attribute", False)),
@@ -191,9 +222,10 @@ def transform_entity(ent: Dict[str, object], tf: Affine2D) -> Optional[Dict[str,
                 "style_name": geom.get("style_name"),
                 "horizontal_mode": geom.get("horizontal_mode"),
                 "vertical_mode": geom.get("vertical_mode"),
+                "text_vertical": bool(geom.get("text_vertical", False)),
                 "attachment": geom.get("attachment"),
                 "oblique": float(geom.get("oblique", 0.0)),
-                "actual_height": float(geom.get("actual_height", t_height)),
+                "actual_height": t_actual_height,
                 "mirrored_x": bool(geom.get("mirrored_x", False)),
                 "mirrored_y": bool(geom.get("mirrored_y", False)),
                 "font_key": geom.get("font_key"),
@@ -211,6 +243,7 @@ def transform_entity(ent: Dict[str, object], tf: Affine2D) -> Optional[Dict[str,
                 ),
                 "text_mask_color": geom.get("text_mask_color"),
                 "text_mask_use_canvas_bg": bool(geom.get("text_mask_use_canvas_bg", False)),
+                "text_extents_source": geom.get("text_extents_source"),
             }
             transformed["bbox"] = _apply_bbox_affine(tf, ent.get("bbox"))
             if transformed["bbox"] is None:

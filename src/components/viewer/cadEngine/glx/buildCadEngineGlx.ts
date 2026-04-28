@@ -1,6 +1,7 @@
 import type { DwgEntityLite } from '@/services/dwgApi';
 import { resolveEntityPrimitives } from './fallback/entityPrimitiveResolver';
 import { renderGraphicPrimitive } from './renderers/primitiveDispatcher';
+import { polylineWidth, renderWidePolylinePrimitive } from './renderers/polylineRenderer';
 import { renderTextPrimitive } from './renderers/textRenderer';
 import type {
   BuildGlxDiagnostics,
@@ -14,6 +15,8 @@ import type {
 import { layerOrderFromEntities, normalizeLayerName, pointXY, pointsFromUnknown, primitiveColor, primitiveKind, resolveEntityColor } from './utils';
 
 const MAX_FLOATS_PER_MESH_CHUNK = 16384;
+const FLOATS_PER_LINE_SEGMENT = 4;
+const FLOATS_PER_TRIANGLE = 6;
 
 function addLayerChild(layerChildren: Map<string, number[]>, layer: string, childIndex: number) {
   const children = layerChildren.get(layer) ?? [];
@@ -83,17 +86,19 @@ function buildMeshes(
   };
 
   for (const bucket of meshBuckets.values()) {
-    if (bucket.points.length < 4) continue;
+    const floatsPerPrimitive = bucket.mode === 2 ? FLOATS_PER_TRIANGLE : FLOATS_PER_LINE_SEGMENT;
+    if (bucket.points.length < floatsPerPrimitive) continue;
     let cursor = 0;
     while (cursor < bucket.points.length) {
       let next = Math.min(bucket.points.length, cursor + MAX_FLOATS_PER_MESH_CHUNK);
       if (next < bucket.points.length) {
-        const aligned = next - (next % 4);
-        next = aligned > cursor ? aligned : Math.min(bucket.points.length, cursor + 4);
+        const relativeCount = next - cursor;
+        const aligned = next - (relativeCount % floatsPerPrimitive);
+        next = aligned > cursor ? aligned : Math.min(bucket.points.length, cursor + floatsPerPrimitive);
       }
       const slice = bucket.points.slice(cursor, next);
       cursor = next;
-      if (slice.length < 4) continue;
+      if (slice.length < floatsPerPrimitive) continue;
 
       const floatCount = slice.length;
       const byteLength = 1 + floatCount * 8;
@@ -278,6 +283,16 @@ export function buildCadEngineGlx(entities: DwgEntityLite[], options: BuildGlxOp
           const fillRendered = renderFilledPolygonPrimitive(fillBucket.points, primitive);
           rendered = fillRendered && fillBucket.points.length > beforeFillLen;
         }
+
+        const outlineBucket = getOrCreateBucket(meshBuckets, layer, color, 0);
+        const beforeOutlineLen = outlineBucket.points.length;
+        renderGraphicPrimitive(kind, outlineBucket.points, primitive);
+        rendered = rendered || outlineBucket.points.length > beforeOutlineLen;
+      } else if (kind === 'polyline' && polylineWidth(primitive) > 0) {
+        const fillBucket = getOrCreateBucket(meshBuckets, layer, color, 2);
+        const beforeFillLen = fillBucket.points.length;
+        const fillRendered = renderWidePolylinePrimitive(fillBucket.points, primitive);
+        rendered = fillRendered && fillBucket.points.length > beforeFillLen;
 
         const outlineBucket = getOrCreateBucket(meshBuckets, layer, color, 0);
         const beforeOutlineLen = outlineBucket.points.length;

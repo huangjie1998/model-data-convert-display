@@ -64,13 +64,17 @@ def build_entity_from_oda_lines(
     end_angle: Optional[float] = None
     vertices: List[Dict[str, float]] = []
     vertex_segment_kinds: List[str] = []
+    vertex_start_widths: List[Optional[float]] = []
+    vertex_end_widths: List[Optional[float]] = []
     current_vertex_segment_kind: Optional[str] = None
+    current_vertex_index: Optional[int] = None
     block_name: Optional[str] = None
     scale_factors: Optional[Dict[str, float]] = None
     rotation_deg: Optional[float] = None
     text_string: Optional[str] = None
     text_height: Optional[float] = None
     text_width: Optional[float] = None
+    actual_width: Optional[float] = None
     major_axis_vec: Optional[Dict[str, float]] = None
     minor_axis_vec: Optional[Dict[str, float]] = None
     major_radius: Optional[float] = None
@@ -87,6 +91,7 @@ def build_entity_from_oda_lines(
     horizontal_mode: Optional[str] = None
     vertical_mode: Optional[str] = None
     attachment_mode: Optional[str] = None
+    text_vertical: Optional[bool] = None
     actual_height: Optional[float] = None
     mirrored_x: Optional[bool] = None
     mirrored_y: Optional[bool] = None
@@ -144,6 +149,81 @@ def build_entity_from_oda_lines(
     in_dimension_block_section = False
 
     expect_vertex_point = False
+    start_width_cursor = 0
+    end_width_cursor = 0
+    start_width_events: List[Tuple[Optional[int], float]] = []
+    end_width_events: List[Tuple[Optional[int], float]] = []
+
+    def _ensure_vertex_width_slots(index: int) -> None:
+        while len(vertex_start_widths) <= index:
+            vertex_start_widths.append(None)
+        while len(vertex_end_widths) <= index:
+            vertex_end_widths.append(None)
+
+    def _assign_vertex_width(kind: str, width: float) -> bool:
+        nonlocal start_width_cursor, end_width_cursor
+        if etype.lower() not in ("acdbpolyline", "acdb2dpolyline", "acdb3dpolyline", "acdblwpolyline"):
+            return False
+        if current_vertex_index is not None:
+            index = current_vertex_index
+        elif vertices:
+            if kind == "start":
+                index = start_width_cursor
+                start_width_cursor += 1
+            else:
+                index = end_width_cursor
+                end_width_cursor += 1
+        else:
+            return False
+        if index < 0 or index >= len(vertices):
+            return False
+        _ensure_vertex_width_slots(index)
+        if kind == "start":
+            start_width_events.append((index, float(width)))
+            vertex_start_widths[index] = float(width)
+        else:
+            end_width_events.append((index, float(width)))
+            vertex_end_widths[index] = float(width)
+        return True
+
+    def _finalize_vertex_width_events() -> None:
+        def _apply(events: List[Tuple[Optional[int], float]], target: List[Optional[float]]) -> None:
+            if not events or not vertices:
+                return
+            target.clear()
+            while len(target) < len(vertices):
+                target.append(None)
+            valid_indices = [
+                index
+                for index, _width in events
+                if isinstance(index, int) and 0 <= index < len(vertices)
+            ]
+            unique_indices = set(valid_indices)
+            use_sequential = (
+                len(events) == len(vertices)
+                and len(unique_indices) != len(events)
+            ) or (
+                len(events) > 1
+                and len(unique_indices) <= 1
+                and len(events) <= len(vertices)
+            )
+            if use_sequential:
+                for idx, (_source_index, width) in enumerate(events[: len(vertices)]):
+                    target[idx] = float(width)
+                return
+            fallback_index = 0
+            for source_index, width in events:
+                if isinstance(source_index, int) and 0 <= source_index < len(vertices):
+                    target[source_index] = float(width)
+                    continue
+                while fallback_index < len(vertices) and target[fallback_index] is not None:
+                    fallback_index += 1
+                if fallback_index < len(vertices):
+                    target[fallback_index] = float(width)
+                    fallback_index += 1
+
+        _apply(start_width_events, vertex_start_widths)
+        _apply(end_width_events, vertex_end_widths)
 
     for raw in lines:
         stripped = raw.strip()
@@ -157,11 +237,14 @@ def build_entity_from_oda_lines(
                 if inline_pt is not None:
                     vertices.append(inline_pt)
                     vertex_segment_kinds.append((current_vertex_segment_kind or "").strip())
+                    current_vertex_index = len(vertices) - 1
+                    _ensure_vertex_width_slots(current_vertex_index)
                     expect_vertex_point = False
                     current_vertex_segment_kind = None
                     continue
             expect_vertex_point = True
             current_vertex_segment_kind = None
+            current_vertex_index = None
             continue
 
         label, value = context.parse_label_value(raw)
@@ -201,6 +284,8 @@ def build_entity_from_oda_lines(
             if pt is not None:
                 vertices.append(pt)
                 vertex_segment_kinds.append((current_vertex_segment_kind or "").strip())
+                current_vertex_index = len(vertices) - 1
+                _ensure_vertex_width_slots(current_vertex_index)
                 expect_vertex_point = False
                 current_vertex_segment_kind = None
             continue
@@ -388,13 +473,15 @@ def build_entity_from_oda_lines(
             continue
         if label in ("start width", "starting width"):
             w = context.parse_float_value(value)
-            if isinstance(w, float) and math.isfinite(w) and w > 0:
+            if isinstance(w, float) and math.isfinite(w) and w >= 0:
+                _assign_vertex_width("start", float(w))
                 if poly_start_width is None or w > poly_start_width:
                     poly_start_width = float(w)
             continue
         if label in ("end width", "ending width"):
             w = context.parse_float_value(value)
-            if isinstance(w, float) and math.isfinite(w) and w > 0:
+            if isinstance(w, float) and math.isfinite(w) and w >= 0:
+                _assign_vertex_width("end", float(w))
                 if poly_end_width is None or w > poly_end_width:
                     poly_end_width = float(w)
             continue
@@ -492,7 +579,11 @@ def build_entity_from_oda_lines(
         if label == "height":
             text_height = context.parse_float_value(value)
             continue
-        if label in ("actual width", "width"):
+        if label == "actual width":
+            actual_width = context.parse_float_value(value)
+            text_width = actual_width
+            continue
+        if label == "width":
             text_width = context.parse_float_value(value)
             continue
         if label == "actual height":
@@ -561,6 +652,9 @@ def build_entity_from_oda_lines(
         if label == "attachment":
             attachment_mode = value
             continue
+        if label in ("vertical", "is vertical", "vertical text"):
+            text_vertical = value.strip().lower() in ("true", "1", "yes", "y", "ktrue")
+            continue
         if label == "background fill on":
             mtext_background_fill_on = value.strip().lower() == "true"
             continue
@@ -599,6 +693,8 @@ def build_entity_from_oda_lines(
         style_obj["linetype"] = linetype_name
     if text_style_name:
         style_obj["text_style"] = text_style_name
+
+    _finalize_vertex_width_events()
 
     non_dimension_entity = build_non_dimension_entity(locals(), context)
     if non_dimension_entity is not NOT_HANDLED:

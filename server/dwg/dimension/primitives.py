@@ -6,6 +6,63 @@ from typing import Dict, List, Optional, Tuple
 from server.dwg.entities.primitives_common import Entity, Geom, Point, Primitive, PrimitiveBuildContext, finite_float, is_point_dict, point_distance
 
 
+def _aci_to_rgb_decimal(aci: int) -> str:
+    idx = int(aci)
+    if idx in (0, 256) or idx < 0:
+        idx = 7
+    basic = {
+        1: 0xFF0000,
+        2: 0xFFFF00,
+        3: 0x00FF00,
+        4: 0x00FFFF,
+        5: 0x0000FF,
+        6: 0xFF00FF,
+        7: 0xFFFFFF,
+        8: 0x7F7F7F,
+        9: 0xC0C0C0,
+    }
+    return str(basic.get(idx, 0xCCCCCC))
+
+
+def _resolve_dim_color(value: object) -> Optional[str]:
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        n = int(value)
+        if n in (0, 256):
+            return None
+        if 0 < n <= 255:
+            return _aci_to_rgb_decimal(n)
+        if n > 255:
+            return str(max(0, min(0xFFFFFF, n)))
+    text = str(value or "").strip()
+    if not text:
+        return None
+    lower = text.lower()
+    if lower in ("bylayer", "byblock", "default", "foreground"):
+        return None
+    if lower.startswith("aci"):
+        digits = "".join(ch for ch in lower if ch.isdigit() or ch == "-")
+        try:
+            return _resolve_dim_color(int(digits))
+        except Exception:
+            return None
+    if text.isdigit():
+        return _resolve_dim_color(int(text))
+    return text
+
+
+def _dimension_style_color(geom: Geom, key: str) -> Optional[str]:
+    dim_vars = geom.get("dim_style_vars")
+    if not isinstance(dim_vars, dict):
+        return None
+    return _resolve_dim_color(dim_vars.get(key))
+
+
+def _with_color(primitive: Primitive, color: Optional[str]) -> Primitive:
+    if color:
+        primitive["color"] = color
+    return primitive
+
+
 def normalize_arrow_style_name(raw: object) -> str:
     text = str(raw or "").strip().lower()
     token = "".join(ch for ch in text if ch.isalnum())
@@ -203,6 +260,8 @@ def build_dimension_primitives(ent: Entity, geom: Geom, context: PrimitiveBuildC
     end_block = geom.get("arrow_block2") or arrow_block
     start_style = normalize_arrow_style_name(start_block)
     end_style = normalize_arrow_style_name(end_block)
+    dim_line_color = _dimension_style_color(geom, "dimclrd")
+    ext_line_color = _dimension_style_color(geom, "dimclre")
 
     if is_point_dict(line_start) and is_point_dict(line_end):
         base_len = point_distance(line_start, line_end)
@@ -219,16 +278,16 @@ def build_dimension_primitives(ent: Entity, geom: Geom, context: PrimitiveBuildC
         if style_name == "archtick":
             tick_seg = arrow_marker_archtick_segment(tip, inward, max(arrow_len, 4.0))
             if tick_seg:
-                out.append({"kind": "line", "start": tick_seg[0], "end": tick_seg[1], "subtype": "dim_arrow_tick", "arrow_style": style_name, "arrow_block": style_block})
+                out.append(_with_color({"kind": "line", "start": tick_seg[0], "end": tick_seg[1], "subtype": "dim_arrow_tick", "arrow_style": style_name, "arrow_block": style_block}, dim_line_color))
             return
         if style_name == "open":
             for line_a, line_b in arrow_marker_lines(tip, inward, arrow_len, arrow_half):
-                out.append({"kind": "line", "start": line_a, "end": line_b, "subtype": "dim_arrow_open", "arrow_style": style_name, "arrow_block": style_block})
+                out.append(_with_color({"kind": "line", "start": line_a, "end": line_b, "subtype": "dim_arrow_open", "arrow_style": style_name, "arrow_block": style_block}, dim_line_color))
             return
         if style_name == "closed_blank":
             tri = arrow_marker_triangle_points(tip, inward, arrow_len, arrow_half)
             if tri:
-                out.append({"kind": "polyline", "points": tri, "closed": True, "subtype": "dim_arrow_closed_blank", "arrow_style": style_name, "arrow_block": style_block})
+                out.append(_with_color({"kind": "polyline", "points": tri, "closed": True, "subtype": "dim_arrow_closed_blank", "arrow_style": style_name, "arrow_block": style_block}, dim_line_color))
             return
         if style_name == "dot":
             dot_radius = max(1.2, min(arrow_len * 0.32, arrow_len))
@@ -236,11 +295,11 @@ def build_dimension_primitives(ent: Entity, geom: Geom, context: PrimitiveBuildC
             ty = float(tip.get("y", 0.0))
             tz = float(tip.get("z", 0.0))
             dot_pts = [{"x": tx + dot_radius * math.cos(math.pi * 2 * (i / 14)), "y": ty + dot_radius * math.sin(math.pi * 2 * (i / 14)), "z": tz} for i in range(15)]
-            out.append({"kind": "polygon", "rings": [dot_pts], "filled": True, "pattern_name": "ARROW", "arrow_fill": True, "subtype": "dim_arrow_dot", "arrow_style": style_name, "arrow_block": style_block})
+            out.append(_with_color({"kind": "polygon", "rings": [dot_pts], "filled": True, "pattern_name": "ARROW", "arrow_fill": True, "subtype": "dim_arrow_dot", "arrow_style": style_name, "arrow_block": style_block}, dim_line_color))
             return
         tri = arrow_marker_triangle_points(tip, inward, arrow_len, arrow_half)
         if tri:
-            out.append({"kind": "polygon", "rings": [tri], "filled": True, "pattern_name": "ARROW", "arrow_fill": True, "subtype": "dim_arrow_fill", "arrow_style": style_name, "arrow_block": style_block})
+            out.append(_with_color({"kind": "polygon", "rings": [tri], "filled": True, "pattern_name": "ARROW", "arrow_fill": True, "subtype": "dim_arrow_fill", "arrow_style": style_name, "arrow_block": style_block}, dim_line_color))
 
     if dim_kind == "angular":
         center = geom.get("center")
@@ -252,11 +311,11 @@ def build_dimension_primitives(ent: Entity, geom: Geom, context: PrimitiveBuildC
             if is_point_dict(ext1_start) and is_point_dict(ext1_end) and is_point_dict(ext2_start) and is_point_dict(ext2_end):
                 center = line_intersection_2d(ext1_start, ext1_end, ext2_start, ext2_end)
         if is_point_dict(ext1) and is_point_dict(line_start):
-            out.append({"kind": "line", "start": ext1, "end": line_start})
+            out.append(_with_color({"kind": "line", "start": ext1, "end": line_start}, ext_line_color))
         if is_point_dict(ext2) and is_point_dict(line_end):
-            out.append({"kind": "line", "start": ext2, "end": line_end})
+            out.append(_with_color({"kind": "line", "start": ext2, "end": line_end}, ext_line_color))
         if is_point_dict(center) and is_point_dict(line_start) and is_point_dict(line_end):
-            out.append({"kind": "arc", "center": center, "radius": max(1e-6, point_distance(center, line_start)), "start": line_start, "end": line_end})
+            out.append(_with_color({"kind": "arc", "center": center, "radius": max(1e-6, point_distance(center, line_start)), "start": line_start, "end": line_end}, dim_line_color))
             append_dimension_arrow(line_start, (float(center["x"]) - float(line_start["x"]), float(center["y"]) - float(line_start["y"])), start_style, start_block)
             append_dimension_arrow(line_end, (float(center["x"]) - float(line_end["x"]), float(center["y"]) - float(line_end["y"])), end_style, end_block)
     elif dim_kind == "arc_length":
@@ -264,33 +323,33 @@ def build_dimension_primitives(ent: Entity, geom: Geom, context: PrimitiveBuildC
         if not is_point_dict(center):
             center = geom.get("dim_line_point")
         if is_point_dict(ext1) and is_point_dict(line_start):
-            out.append({"kind": "line", "start": ext1, "end": line_start})
+            out.append(_with_color({"kind": "line", "start": ext1, "end": line_start}, ext_line_color))
         if is_point_dict(ext2) and is_point_dict(line_end):
-            out.append({"kind": "line", "start": ext2, "end": line_end})
+            out.append(_with_color({"kind": "line", "start": ext2, "end": line_end}, ext_line_color))
         if is_point_dict(center) and is_point_dict(line_start) and is_point_dict(line_end):
-            out.append({"kind": "arc", "center": center, "radius": max(1e-6, point_distance(center, line_start)), "start": line_start, "end": line_end, "subtype": "arc_length_dimension"})
+            out.append(_with_color({"kind": "arc", "center": center, "radius": max(1e-6, point_distance(center, line_start)), "start": line_start, "end": line_end, "subtype": "arc_length_dimension"}, dim_line_color))
             append_dimension_arrow(line_start, (float(center["x"]) - float(line_start["x"]), float(center["y"]) - float(line_start["y"])), start_style, start_block)
             append_dimension_arrow(line_end, (float(center["x"]) - float(line_end["x"]), float(center["y"]) - float(line_end["y"])), end_style, end_block)
     elif dim_kind == "radius":
         center = geom.get("center")
         tip = line_end if is_point_dict(line_end) else ext2 if is_point_dict(ext2) else None
         if is_point_dict(center) and is_point_dict(tip):
-            out.append({"kind": "line", "start": center, "end": tip})
+            out.append(_with_color({"kind": "line", "start": center, "end": tip}, dim_line_color))
             append_dimension_arrow(tip, (float(center["x"]) - float(tip["x"]), float(center["y"]) - float(tip["y"])), start_style, start_block)
     elif dim_kind == "diameter":
         if is_point_dict(line_start) and is_point_dict(line_end):
-            out.append({"kind": "line", "start": line_start, "end": line_end})
+            out.append(_with_color({"kind": "line", "start": line_start, "end": line_end}, dim_line_color))
             append_dimension_arrow(line_start, (float(line_end["x"]) - float(line_start["x"]), float(line_end["y"]) - float(line_start["y"])), start_style, start_block)
             append_dimension_arrow(line_end, (float(line_start["x"]) - float(line_end["x"]), float(line_start["y"]) - float(line_end["y"])), end_style, end_block)
     elif dim_kind == "ordinate":
         if is_point_dict(line_start) and is_point_dict(line_end):
-            out.append({"kind": "line", "start": line_start, "end": line_end})
+            out.append(_with_color({"kind": "line", "start": line_start, "end": line_end}, dim_line_color))
             append_dimension_arrow(line_start, (float(line_end["x"]) - float(line_start["x"]), float(line_end["y"]) - float(line_start["y"])), start_style, start_block)
     else:
         if is_point_dict(ext1) and is_point_dict(line_start):
-            out.append({"kind": "line", "start": ext1, "end": line_start})
+            out.append(_with_color({"kind": "line", "start": ext1, "end": line_start}, ext_line_color))
         if is_point_dict(ext2) and is_point_dict(line_end):
-            out.append({"kind": "line", "start": ext2, "end": line_end})
+            out.append(_with_color({"kind": "line", "start": ext2, "end": line_end}, ext_line_color))
         if is_point_dict(line_start) and is_point_dict(line_end):
             seg_dx = float(line_end["x"]) - float(line_start["x"])
             seg_dy = float(line_end["y"]) - float(line_start["y"])
@@ -303,7 +362,7 @@ def build_dimension_primitives(ent: Entity, geom: Geom, context: PrimitiveBuildC
                 inset = arrow_len * 0.9
                 line_head = {"x": float(line_start["x"]) + ux * inset, "y": float(line_start["y"]) + uy * inset, "z": float(line_start.get("z", 0.0))}
                 line_tail = {"x": float(line_end["x"]) - ux * inset, "y": float(line_end["y"]) - uy * inset, "z": float(line_end.get("z", 0.0))}
-            out.append({"kind": "line", "start": line_head, "end": line_tail})
+            out.append(_with_color({"kind": "line", "start": line_head, "end": line_tail}, dim_line_color))
             append_dimension_arrow(line_start, (seg_dx, seg_dy), start_style, start_block)
             append_dimension_arrow(line_end, (-seg_dx, -seg_dy), end_style, end_block)
 

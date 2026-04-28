@@ -15,6 +15,7 @@ import {
 } from '../text/cadTextNormalize.js';
 import { layoutCadText } from '../text/textLayout.js';
 import { wrapSingleLineToWidth } from '../text/textWrap.js';
+import { textCanvasWidthFactorFromTargetWidth, textHorizontalScaleFromTargetWidth } from './textScaleStrategy.js';
 
 const TEXT_MASK_RENDER_ORDER = 9998;
 const TEXT_RENDER_ORDER = 9999;
@@ -534,7 +535,7 @@ export class Scene3D {
   _textAnchorBBox(bbox, textPayload) {
     if (!bbox || typeof bbox.clone !== 'function') return bbox;
     const box = bbox.clone();
-    const width = toFiniteNumber(textPayload?.width, 0);
+    const width = textPayload?.isMText === true ? 0 : toFiniteNumber(textPayload?.width, 0);
     const isMText = textPayload?.isMText === true;
     if (isMText && Number.isFinite(width) && width > 1e-6) {
       const widthFactor = safeWidthFactor(textPayload?.widthFactor);
@@ -547,6 +548,9 @@ export class Scene3D {
   _textLines(textPayload) {
     const text = normalizeCadTextForDisplay(textPayload?.text);
     if (!text) return [];
+    if (textPayload?.verticalText === true) {
+      return [...this._sanitizeTextForFont(text)].filter((char) => char !== '\n');
+    }
     return this._wrapTextToWidth(this._sanitizeTextForFont(text), textPayload);
   }
 
@@ -706,8 +710,11 @@ export class Scene3D {
   _shxTextLines(textPayload) {
     const text = normalizeCadTextForDisplay(textPayload?.text);
     if (!text) return [];
+    if (textPayload?.verticalText === true) {
+      return [...text].filter((char) => char !== '\n');
+    }
     const lines = this._wrapTextToWidth(text, textPayload, (line) => this._shxTextLineAdvance(line, textPayload, false));
-    const width = toFiniteNumber(textPayload?.width, 0);
+    const width = textPayload?.isMText === true ? 0 : toFiniteNumber(textPayload?.width, 0);
     if (textPayload?.isMText === true && width > 1e-6) {
       this._textDiagnostics.mtextDefinedWidthCount += 1;
       this._textDiagnostics.mtextWrappedLineCount += lines.length;
@@ -774,11 +781,11 @@ export class Scene3D {
     const anchor = this._textAnchorFromBBox(this._textAnchorBBox(geometry.boundingBox, textPayload), textPayload);
     geometry.translate(-anchor.x, -anchor.y, 0);
 
-    const widthFactor = safeWidthFactor(textPayload.widthFactor);
+    const horizontalScale = textHorizontalScaleFromTargetWidth(geometry.boundingBox, textPayload);
     const mirrorX = textPayload.mirroredX === true ? -1 : 1;
     const mirrorY = textPayload.mirroredY === true ? -1 : 1;
     const shear = Math.tan(normalizeObliqueToRadians(textPayload.oblique));
-    const scaleMatrix = new THREE.Matrix4().makeScale(widthFactor * mirrorX, mirrorY, 1);
+    const scaleMatrix = new THREE.Matrix4().makeScale(horizontalScale * mirrorX, mirrorY, 1);
     geometry.applyMatrix4(scaleMatrix);
     geometry.applyMatrix4(makeShearMatrix(shear));
     geometry.computeBoundingBox();
@@ -860,11 +867,11 @@ export class Scene3D {
     const anchor = this._textAnchorFromBBox(this._textAnchorBBox(geometry.boundingBox, textPayload), textPayload);
     geometry.translate(-anchor.x, -anchor.y, 0);
 
-    const widthFactor = safeWidthFactor(textPayload.widthFactor);
+    const horizontalScale = textHorizontalScaleFromTargetWidth(geometry.boundingBox, textPayload);
     const mirrorX = textPayload.mirroredX === true ? -1 : 1;
     const mirrorY = textPayload.mirroredY === true ? -1 : 1;
     const shear = Math.tan(normalizeObliqueToRadians(textPayload.oblique));
-    const scaleMatrix = new THREE.Matrix4().makeScale(widthFactor * mirrorX, mirrorY, 1);
+    const scaleMatrix = new THREE.Matrix4().makeScale(horizontalScale * mirrorX, mirrorY, 1);
     geometry.applyMatrix4(scaleMatrix);
     geometry.applyMatrix4(makeShearMatrix(shear));
     geometry.computeBoundingBox();
@@ -960,7 +967,6 @@ export class Scene3D {
 
     const fontPx = Math.max(12, Math.min(256, Math.round(textPayload.height)));
     const lineHeightPx = Math.ceil(fontPx * TEXT_LINE_HEIGHT_FACTOR);
-    const widthFactor = safeWidthFactor(textPayload.widthFactor);
     const shear = Math.tan(normalizeObliqueToRadians(textPayload.oblique));
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -971,7 +977,9 @@ export class Scene3D {
     for (let i = 0; i < lines.length; i += 1) {
       maxLineWidth = Math.max(maxLineWidth, ctx.measureText(lines[i] || ' ').width);
     }
-    const textWidthPx = Math.max(1, maxLineWidth * widthFactor);
+    const pixelToWorld = textPayload.height / fontPx;
+    const effectiveWidthFactor = textCanvasWidthFactorFromTargetWidth(textPayload, maxLineWidth, pixelToWorld);
+    const textWidthPx = Math.max(1, maxLineWidth * effectiveWidthFactor);
     const textHeightPx = Math.max(fontPx, lineHeightPx * Math.max(1, lines.length));
     const skewPadPx = Math.abs(shear) * textHeightPx;
     const paddingPx = Math.max(4, Math.ceil(fontPx * 0.35));
@@ -993,7 +1001,7 @@ export class Scene3D {
     draw.fillStyle = '#ffffff';
     draw.save();
     draw.translate(paddingPx + (shear < 0 ? skewPadPx : 0), paddingPx + fontPx);
-    draw.transform(widthFactor * (textPayload.mirroredX === true ? -1 : 1), 0, -shear, textPayload.mirroredY === true ? -1 : 1, 0, 0);
+    draw.transform(effectiveWidthFactor * (textPayload.mirroredX === true ? -1 : 1), 0, -shear, textPayload.mirroredY === true ? -1 : 1, 0, 0);
     for (let i = 0; i < lines.length; i += 1) {
       draw.fillText(lines[i] || ' ', 0, i * lineHeightPx);
     }
@@ -1012,7 +1020,6 @@ export class Scene3D {
       depthTest: false,
       depthWrite: false,
     });
-    const pixelToWorld = textPayload.height / fontPx;
     const worldWidth = width * pixelToWorld;
     const worldHeight = height * pixelToWorld;
     const bbox = new THREE.Box3(

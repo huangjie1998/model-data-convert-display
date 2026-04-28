@@ -153,6 +153,7 @@ type DwgPrimitiveCore =
       start_width?: number;
       end_width?: number;
       global_width?: number;
+      segment_widths?: Array<{ segment?: number; start_width?: number; end_width?: number }>;
       subtype?: string;
       arrow_style?: string;
       arrow_block?: string;
@@ -185,12 +186,14 @@ type DwgPrimitiveCore =
       color?: string | number;
       height?: number;
       actual_height?: number;
+      actual_width?: number;
       width?: number;
       rotation?: number;
       width_factor?: number;
       oblique?: number;
       horizontal_mode?: string;
       vertical_mode?: string;
+      text_vertical?: boolean;
       attachment?: string;
       mirrored_x?: boolean;
       mirrored_y?: boolean;

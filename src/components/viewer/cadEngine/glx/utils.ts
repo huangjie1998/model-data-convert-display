@@ -168,7 +168,7 @@ function parseAciFromUnknown(value: unknown): number | null {
   }
   if (/^[-+]?\d+$/.test(raw)) {
     const n = Number(raw);
-    return Number.isFinite(n) ? Math.round(n) : null;
+    return Number.isFinite(n) && n >= 0 && n <= 256 ? Math.round(n) : null;
   }
   return null;
 }
@@ -241,14 +241,12 @@ export function resolveEntityColor(entity: DwgEntityLite): string {
 
   const trueColorCandidates = [
     styleRecord.effective_color_rgb,
-    styleRecord.color_rgb,
-    styleRecord.color,
     styleRecord.effective_color,
+    styleRecord.color_rgb,
     styleRecord.color_hex,
     styleRecord.rgb,
     styleRecord.line_color,
     geomRecord.color_rgb,
-    geomRecord.color,
     geomRecord.color_hex,
   ];
   for (const value of trueColorCandidates) {
@@ -259,7 +257,9 @@ export function resolveEntityColor(entity: DwgEntityLite): string {
   const explicitAciCandidates = [
     styleRecord.effective_color_index,
     styleRecord.color_index,
+    styleRecord.color,
     geomRecord.color_index,
+    geomRecord.color,
   ];
   for (const aciRaw of explicitAciCandidates) {
     const aci = parseAciFromUnknown(aciRaw);
@@ -279,7 +279,7 @@ export function primitiveColor(primitive: PrimitiveRecord, entityColor: string):
     if (resolvedAci !== null) return aciToRgbDecimal(resolvedAci);
   }
 
-  const explicitAciCandidates = [record.color_index];
+  const explicitAciCandidates = [record.color_index, record.color];
   for (const aciRaw of explicitAciCandidates) {
     const aci = parseAciFromUnknown(aciRaw);
     if (aci !== null) return aciToRgbDecimal(aci);

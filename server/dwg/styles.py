@@ -87,10 +87,11 @@ def extract_text_styles(dump_text: str, context: StyleExtractionContext) -> Dict
     current_bigfont_file: Optional[str] = None
     current_typeface: Optional[str] = None
     current_shape_file = False
+    current_vertical = False
     in_record = False
 
     def finalize_record() -> None:
-        nonlocal current_name, current_font_file, current_bigfont_file, current_typeface, current_shape_file
+        nonlocal current_name, current_font_file, current_bigfont_file, current_typeface, current_shape_file, current_vertical
         if current_name:
             font_name = (current_font_file or "").strip() or (current_typeface or "").strip() or current_name
             bigfont_name = (current_bigfont_file or "").strip() or None
@@ -105,12 +106,14 @@ def extract_text_styles(dump_text: str, context: StyleExtractionContext) -> Dict
                 "font_family": font_family,
                 "font_kind": font_kind,
                 "shape_file": bool(current_shape_file),
+                "vertical": bool(current_vertical),
             }
         current_name = None
         current_font_file = None
         current_bigfont_file = None
         current_typeface = None
         current_shape_file = False
+        current_vertical = False
 
     for raw in dump_text.splitlines():
         stripped = raw.strip()
@@ -139,6 +142,8 @@ def extract_text_styles(dump_text: str, context: StyleExtractionContext) -> Dict
             current_typeface = value
         elif label == "shape file":
             current_shape_file = str(value).strip().lower() == "true"
+        elif label in ("vertical", "is vertical", "vertical text"):
+            current_vertical = str(value).strip().lower() in ("true", "1", "yes", "y", "ktrue")
 
     if in_record:
         finalize_record()
