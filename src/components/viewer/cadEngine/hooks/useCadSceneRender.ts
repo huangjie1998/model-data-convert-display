@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ensureAssetReachable } from '../assetHealth';
 import { waitForLayerReady, readRuntimeLayers } from '../layerRuntime';
 import { loadCadEngineScene } from '../loadCadEngineScene';
@@ -22,6 +22,9 @@ import { buildCadEngineGlx, type BuildGlxDiagnostics } from '../dwgToGlx';
 import { resolveCadEngineApi } from '../runtimeBridge';
 import { apiPurgeModel, apiSetFontPath, apiSetLayerVisible } from '../apiCompat';
 import type { UseCadSceneRenderInput, UseCadSceneRenderResult } from './contracts';
+
+const EMPTY_HIDDEN_ENTITY_IDS = new Set<string>();
+const MAX_ENTITY_HIDE_REBUILD_COUNT = 1000;
 
 function toRuntimeTextDiagnostics(value: unknown): TextGlyphDiagnostics | null {
   if (!value || typeof value !== 'object') return null;
@@ -87,6 +90,10 @@ export function useCadSceneRender(input: UseCadSceneRenderInput): UseCadSceneRen
   const [layerIdByName, setLayerIdByName] = useState<Map<string, number>>(new Map());
   const [renderDiagnostics, setRenderDiagnostics] = useState<BuildGlxDiagnostics | null>(null);
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<CadEngineRuntimeDiagnostics | null>(null);
+  const renderHiddenEntityIds = useMemo(
+    () => (hiddenEntityIds.size > 0 && hiddenEntityIds.size <= MAX_ENTITY_HIDE_REBUILD_COUNT ? hiddenEntityIds : EMPTY_HIDDEN_ENTITY_IDS),
+    [hiddenEntityIds]
+  );
 
   const resetRenderState = useCallback(() => {
     setLayerIdByName(new Map());
@@ -124,7 +131,7 @@ export function useCadSceneRender(input: UseCadSceneRenderInput): UseCadSceneRen
 
       try {
         const built = buildCadEngineGlx(entities, {
-          hiddenEntityIds,
+          hiddenEntityIds: renderHiddenEntityIds,
           spaceName: currentSpace,
           emitEngineText: true,
         });
@@ -264,7 +271,7 @@ export function useCadSceneRender(input: UseCadSceneRenderInput): UseCadSceneRen
       cancelled = true;
       sceneReadyRef.current = false;
     };
-  }, [apiRef, currentSpace, drawOverlay, engineRef, entities, hiddenEntityIds, onError, onOverlayTextsChange, resizeEngine, revokeSceneBlobUrls, sceneBlobUrlsRef, sceneReadyRef]);
+  }, [apiRef, currentSpace, drawOverlay, engineRef, entities, onError, onOverlayTextsChange, renderHiddenEntityIds, resizeEngine, revokeSceneBlobUrls, sceneBlobUrlsRef, sceneReadyRef]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {

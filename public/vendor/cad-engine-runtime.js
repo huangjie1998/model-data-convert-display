@@ -30947,7 +30947,7 @@ void main() {
   function normalizeCadTextForDisplay(value) {
     let text = decodeCadUnicodeEscapes(value);
     if (!text) return "";
-    text = text.replace(/%%d/gi, "°").replace(/%%p/gi, "±").replace(/%%c/gi, "⌀").replace(/\\P/gi, "\n").replace(/\\n/g, "\n").replace(/\\~/g, " ");
+    text = text.replace(/%%d/gi, "°").replace(/%%p/gi, "±").replace(/%%c/gi, "⌀").replace(/\u33A1/g, "m2").replace(/\\P/gi, "\n").replace(/\\n/g, "\n").replace(/\\~/g, " ");
     text = text.replace(/\\S([^;]*?)[#^/]([^;]*?);/gi, (_all, top, bottom) => `${top}/${bottom}`);
     text = text.replace(/\\[ACFHQTW][^;]*;/gi, "").replace(/\\[LOK]/gi, "").replace(/[{}]/g, "").replace(/\r\n?/g, "\n").replace(/\u0000/g, "");
     return text.trim();

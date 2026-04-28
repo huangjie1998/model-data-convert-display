@@ -75,6 +75,7 @@ def build_entity_from_oda_lines(
     minor_axis_vec: Optional[Dict[str, float]] = None
     major_radius: Optional[float] = None
     minor_radius: Optional[float] = None
+    radius_ratio: Optional[float] = None
     spline_points: List[Dict[str, float]] = []
     color_index: Optional[int] = None
     color_name: Optional[str] = None
@@ -439,6 +440,12 @@ def build_entity_from_oda_lines(
                 continue
             end_pt = context.parse_point_value(value)
             continue
+        if etype.lower() == "acdbellipse" and label in ("start parameter", "start param", "start parameter angle"):
+            start_angle = context.parse_float_value(value)
+            continue
+        if etype.lower() == "acdbellipse" and label in ("end parameter", "end param", "end parameter angle"):
+            end_angle = context.parse_float_value(value)
+            continue
         if label == "start angle":
             parsed_start_angle = context.parse_float_value(value)
             if etype.lower() == "acdbhatch" and isinstance(hatch_current_edge, dict):
@@ -502,6 +509,19 @@ def build_entity_from_oda_lines(
             continue
         if label == "minor radius":
             minor_radius = context.parse_float_value(value)
+            continue
+        if label in (
+            "radius ratio",
+            "axis ratio",
+            "minor axis ratio",
+            "minor to major ratio",
+            "minor/major ratio",
+            "minor-to-major ratio",
+            "minor axis to major axis ratio",
+        ):
+            parsed_ratio = context.parse_float_value(value)
+            if isinstance(parsed_ratio, float) and math.isfinite(parsed_ratio) and parsed_ratio > 0:
+                radius_ratio = parsed_ratio
             continue
         if label.startswith("control point ") or label.startswith("fit point "):
             pt = context.parse_point_value(value)

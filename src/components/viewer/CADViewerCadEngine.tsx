@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Layers } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Layers, Maximize2, MousePointer2, PanelLeftOpen, PanelRightOpen } from 'lucide-react';
 import type { DwgEntityLite } from '@/services/dwgApi';
 import { normalizeLayerName } from './cadEngine/cadUiUtils';
 import { CadInspectorPanel } from './cadEngine/components/CadInspectorPanel';
@@ -99,6 +99,23 @@ export function CADViewerCadEngine({ rawFile }: CADViewerCadEngineProps) {
     return [...unique].sort((a, b) => a.localeCompare(b));
   }, [entities]);
 
+  const drawingBbox = useMemo(() => {
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const entity of entities) {
+      const bbox = entity.bbox;
+      if (!bbox) continue;
+      minX = Math.min(minX, bbox.min.x, bbox.max.x);
+      minY = Math.min(minY, bbox.min.y, bbox.max.y);
+      maxX = Math.max(maxX, bbox.min.x, bbox.max.x);
+      maxY = Math.max(maxY, bbox.min.y, bbox.max.y);
+    }
+    if (![minX, minY, maxX, maxY].every(Number.isFinite) || maxX <= minX || maxY <= minY) return null;
+    return { min: { x: minX, y: minY, z: 0 }, max: { x: maxX, y: maxY, z: 0 } };
+  }, [entities]);
+
   const {
     selectedEntityId,
     selectedEntityRecord,
@@ -150,9 +167,53 @@ export function CADViewerCadEngine({ rawFile }: CADViewerCadEngineProps) {
         <div className="flex items-center gap-2">
           <Layers className="h-4 w-4 text-cyan-300" />
           <span>DWG CadEngine Mode</span>
+          {rawFile?.name && <span className="max-w-[260px] truncate text-gray-500">{rawFile.name}</span>}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className="inline-flex h-7 items-center gap-1 rounded px-2 text-gray-300 hover:bg-gray-800 hover:text-gray-100"
+            onClick={() => {
+              clearSelection();
+            }}
+            title="选择/清空选择"
+          >
+            <MousePointer2 className="h-3.5 w-3.5" />
+            选择
+          </button>
+          <button
+            type="button"
+            className="inline-flex h-7 items-center gap-1 rounded px-2 text-gray-300 hover:bg-gray-800 hover:text-gray-100"
+            onClick={() => focusBbox(drawingBbox)}
+            disabled={!drawingBbox}
+            title="全图"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+            全图
+          </button>
+          {leftSidebarCollapsed && (
+            <button
+              type="button"
+              className="inline-flex h-7 items-center gap-1 rounded px-2 text-gray-300 hover:bg-gray-800 hover:text-gray-100"
+              onClick={() => setLeftSidebarCollapsed(false)}
+              title="显示元素树"
+            >
+              <PanelLeftOpen className="h-3.5 w-3.5" />
+              元素树
+            </button>
+          )}
+          {rightSidebarCollapsed && (
+            <button
+              type="button"
+              className="inline-flex h-7 items-center gap-1 rounded px-2 text-gray-300 hover:bg-gray-800 hover:text-gray-100"
+              onClick={() => setRightSidebarCollapsed(false)}
+              title="显示属性栏"
+            >
+              <PanelRightOpen className="h-3.5 w-3.5" />
+              属性栏
+            </button>
+          )}
           <select
             className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-200"
             value={currentSpace}

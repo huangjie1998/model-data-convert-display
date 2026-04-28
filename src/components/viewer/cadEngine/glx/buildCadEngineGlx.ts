@@ -34,6 +34,7 @@ function getOrCreateBucket(meshBuckets: Map<string, MeshBucket>, layer: string, 
 function renderFilledPolygonPrimitive(target: number[], primitive: PrimitiveRecord): boolean {
   const record = primitive as Record<string, unknown>;
   const rings = Array.isArray(record.rings) ? record.rings : [];
+  if (rings.length > 1) return false;
   let shell = rings.length > 0 ? pointsFromUnknown(rings[0]) : [];
   if (shell.length < 3) {
     shell = pointsFromUnknown(record.points);

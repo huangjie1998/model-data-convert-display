@@ -24,6 +24,7 @@ export function normalizeCadTextForDisplay(value) {
     .replace(/%%d/gi, '\u00B0')
     .replace(/%%p/gi, '\u00B1')
     .replace(/%%c/gi, '\u2300')
+    .replace(/\u33A1/g, 'm2')
     .replace(/\\P/gi, '\n')
     .replace(/\\n/g, '\n')
     .replace(/\\~/g, ' ');

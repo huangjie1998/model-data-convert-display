@@ -121,7 +121,7 @@ export function normalizeCadTextContent(value: unknown): string {
     .replace(/\\P/gi, '\n')
     .replace(/\\n/g, '\n')
     .replace(/\\~/g, ' ');
-  text = text.replace(/\r\n?/g, '\n').replace(/\u0000/g, '');
+  text = text.replace(/\r\n?/g, '\n').split(String.fromCharCode(0)).join('');
   return text.trim();
 }
 
@@ -348,8 +348,8 @@ export function appendArc(
   let end = toRadians(toNumber(endAngleRaw, 360));
 
   while (end < start) end += Math.PI * 2;
-  let span = end - start;
-  if (span <= 1e-6) span = Math.PI * 2;
+  const span = end - start;
+  if (span <= 1e-6 || span >= Math.PI * 2 - 1e-6) return;
   const steps = Math.max(12, Math.min(192, Math.ceil((span / (Math.PI * 2)) * 128)));
 
   let prev: [number, number] | null = null;
