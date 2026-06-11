@@ -90,9 +90,11 @@ export function primitiveKind(primitive: PrimitiveRecord): string {
 }
 
 export function firstNonEmptyText(values: unknown[]): string {
+  // 仅 trimEnd：尾部空格通常是脏数据，前导空格是用户排版意图（例如 TEXT "  abc"），必须保留。
   for (const value of values) {
-    const text = String(value ?? '').trim();
-    if (text) return text;
+    const text = String(value ?? '');
+    const cleaned = text.trimEnd();
+    if (cleaned.length > 0) return cleaned;
   }
   return '';
 }
@@ -122,7 +124,8 @@ export function normalizeCadTextContent(value: unknown): string {
     .replace(/\\n/g, '\n')
     .replace(/\\~/g, ' ');
   text = text.replace(/\r\n?/g, '\n').split(String.fromCharCode(0)).join('');
-  return text.trim();
+  // 仅 trimEnd：保留前导空格（TEXT 排版意图），尾部空格视为脏数据。
+  return text.trimEnd();
 }
 
 function colorToHexString(r: number, g: number, b: number): string {
@@ -349,7 +352,12 @@ export function appendArc(
 
   while (end < start) end += Math.PI * 2;
   const span = end - start;
-  if (span <= 1e-6 || span >= Math.PI * 2 - 1e-6) return;
+  if (span <= 1e-6) return;
+  // Full circle: delegate to circle tessellation
+  if (span >= Math.PI * 2 - 1e-6) {
+    appendCircle(target, center, radiusRaw);
+    return;
+  }
   const steps = Math.max(12, Math.min(192, Math.ceil((span / (Math.PI * 2)) * 128)));
 
   let prev: [number, number] | null = null;

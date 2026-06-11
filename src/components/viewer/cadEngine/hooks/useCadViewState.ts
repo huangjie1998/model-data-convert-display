@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { OverlayTextItem } from '../dwgToGlx';
 import type { UseCadViewStateInput, UseCadViewStateResult } from './contracts';
 
@@ -16,7 +16,15 @@ export function useCadViewState(input: UseCadViewStateInput = {}): UseCadViewSta
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(initialLeftSidebarCollapsed);
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(initialRightSidebarCollapsed);
 
+  const layerDebounceRef = useRef<number | null>(null);
+  const pendingLayerRef = useRef<string | null>(null);
+
   const resetHiddenLayerNames = useCallback(() => {
+    if (layerDebounceRef.current != null && typeof window !== 'undefined') {
+      window.clearTimeout(layerDebounceRef.current);
+      layerDebounceRef.current = null;
+    }
+    pendingLayerRef.current = null;
     setHiddenLayerNames(new Set());
   }, []);
 
@@ -25,15 +33,32 @@ export function useCadViewState(input: UseCadViewStateInput = {}): UseCadViewSta
   }, []);
 
   const toggleLayer = useCallback((layer: string) => {
-    setHiddenLayerNames((prev) => {
-      const next = new Set(prev);
-      if (next.has(layer)) {
-        next.delete(layer);
-      } else {
-        next.add(layer);
+    // Debounce rapid consecutive layer toggles (50ms) so the CAD engine
+    // receives a single batch of layer-visibility changes instead of one per click.
+    if (typeof window === 'undefined') {
+      setHiddenLayerNames((prev) => {
+        const next = new Set(prev);
+        if (next.has(layer)) { next.delete(layer); } else { next.add(layer); }
+        return next;
+      });
+      return;
+    }
+    pendingLayerRef.current = layer;
+    if (layerDebounceRef.current != null) {
+      window.clearTimeout(layerDebounceRef.current);
+    }
+    layerDebounceRef.current = window.setTimeout(() => {
+      layerDebounceRef.current = null;
+      const pending = pendingLayerRef.current;
+      pendingLayerRef.current = null;
+      if (pending != null) {
+        setHiddenLayerNames((prev) => {
+          const next = new Set(prev);
+          if (next.has(pending)) { next.delete(pending); } else { next.add(pending); }
+          return next;
+        });
       }
-      return next;
-    });
+    }, 50);
   }, []);
 
   const toggleEntityVisibility = useCallback((entityId: string) => {

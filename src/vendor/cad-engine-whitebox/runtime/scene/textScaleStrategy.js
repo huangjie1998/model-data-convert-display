@@ -6,10 +6,14 @@ export function textHorizontalScaleFromTargetWidth(bbox, textPayload) {
   const widthFactor = safeWidthFactor(textPayload?.widthFactor);
   const rotation = toFiniteNumber(textPayload?.rotation, 0);
   const isSideways = Math.abs(Math.sin(rotation)) > 0.985;
-  if (isDimensionTextPayload(textPayload) || textPayload?.isMText === true || textPayload?.verticalText === true || isSideways) {
+  // 只排除 dimension text 和竖排文字，不排除 MTEXT
+  if (isDimensionTextPayload(textPayload) || textPayload?.verticalText === true || isSideways) {
     return widthFactor;
   }
-  const targetWidth = toFiniteNumber(textPayload?.width, 0);
+  // 优先用 actualWidth（ODA 真实渲染宽度），其次用 width
+  const actualW = toFiniteNumber(textPayload?.actualWidth, 0);
+  const declaredW = toFiniteNumber(textPayload?.width, 0);
+  const targetWidth = actualW > 1e-6 ? actualW : declaredW;
   if (!Number.isFinite(targetWidth) || targetWidth <= 1e-6 || !bbox || bbox.isEmpty()) {
     return widthFactor;
   }
@@ -24,10 +28,14 @@ export function textCanvasWidthFactorFromTargetWidth(textPayload, measuredPixelW
   const widthFactor = safeWidthFactor(textPayload?.widthFactor);
   const rotation = toFiniteNumber(textPayload?.rotation, 0);
   const isSideways = Math.abs(Math.sin(rotation)) > 0.985;
-  if (isDimensionTextPayload(textPayload) || textPayload?.isMText === true || textPayload?.verticalText === true || isSideways) {
+  // 只排除 dimension text 和竖排文字，不排除 MTEXT
+  if (isDimensionTextPayload(textPayload) || textPayload?.verticalText === true || isSideways) {
     return widthFactor;
   }
-  const targetWidth = toFiniteNumber(textPayload?.width, 0);
+  // 优先用 actualWidth（ODA 真实渲染宽度），其次用 width
+  const actualW = toFiniteNumber(textPayload?.actualWidth, 0);
+  const declaredW = toFiniteNumber(textPayload?.width, 0);
+  const targetWidth = actualW > 1e-6 ? actualW : declaredW;
   if (
     !Number.isFinite(targetWidth) ||
     targetWidth <= 1e-6 ||

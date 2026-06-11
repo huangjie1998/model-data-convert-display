@@ -804,11 +804,9 @@ def _attach_oda_vectorized_text_primitives_with_debug(
                 shape_file_text = any(bool(p.get("shape_file_text")) for p in resolved if isinstance(p, dict))
                 if shape_file_text:
                     debug["shape_file_text_true_count"] = int(debug.get("shape_file_text_true_count", 0)) + 1
-                if font_kind != "shx" and not shape_file_text:
-                    debug["filtered_by_font_kind_count"] = int(debug.get("filtered_by_font_kind_count", 0)) + 1
-                    debug["filtered_non_shx_count"] = int(debug.get("filtered_non_shx_count", 0)) + 1
-                    continue
 
+                # Allow ODA vectorization for all text, not just SHX.
+                # Text with unrecognized fonts still gets outline rendering.
                 clean_resolved = [p for p in resolved if isinstance(p, dict)]
                 if len(clean_resolved) == 0:
                     debug["empty_after_optimize_count"] = int(debug.get("empty_after_optimize_count", 0)) + 1

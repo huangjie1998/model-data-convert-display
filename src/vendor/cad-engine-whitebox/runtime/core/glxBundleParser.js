@@ -155,7 +155,9 @@ function buildMeshTemplate(meshMeta, materials, meshBytes, meshView) {
 function parseEntityText(entity) {
   if (!entity || entity.type !== 2 || typeof entity.extras !== 'object' || !entity.extras) return null;
   const extras = entity.extras;
-  const text = String(extras.text ?? '').trim();
+  // 仅 trimEnd：保留前导空格（TEXT 排版意图），尾部空格视为脏数据；
+  // 判空也按 trimEnd 后的长度算，避免纯空白文本被当作有效字符串。
+  const text = String(extras.text ?? '').trimEnd();
   if (!text) return null;
 
   const height = Math.max(1, toFiniteNumber(extras.h, 120));
@@ -197,6 +199,8 @@ function parseEntityText(entity) {
     fontFamily: toStringValue(extras.font_family),
     fontKind: toStringValue(extras.font_kind),
     fontSource: toStringValue(extras.font_source),
+    actualWidth: Math.max(0, toFiniteNumber(extras.actual_width, 0)),
+    actualHeight: Math.max(0, toFiniteNumber(extras.actual_height, 0)),
   };
 }
 

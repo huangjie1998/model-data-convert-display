@@ -1,3 +1,7 @@
+"""Backward-compatible re-export shim.
+
+Functions have moved into dedicated sub-modules.
+"""
 from __future__ import annotations
 
 from server.dwg.common.core_utils import (

@@ -16,6 +16,10 @@ export const CAD_ENGINE_SHX_BIGFONT_MAP_URL =
   (import.meta.env.VITE_CAD_ENGINE_SHX_BIGFONT_MAP_URL as string | undefined) ||
   '/vendor/fonts/shx/EngineeringChinese.gb2312-map.json';
 
+export const CAD_ENGINE_SHX_REBAR_FONT_URL =
+  (import.meta.env.VITE_CAD_ENGINE_SHX_REBAR_FONT_URL as string | undefined) ||
+  '/vendor/fonts/shx/tssdeng.shx';
+
 function parsePositiveFloat(value: string | undefined, fallback: number, min: number, max: number): number {
   const parsed = Number.parseFloat(String(value ?? ''));
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
@@ -24,21 +28,28 @@ function parsePositiveFloat(value: string | undefined, fallback: number, min: nu
 
 export const CAD_ENGINE_SHX_BIGFONT_SCALE = parsePositiveFloat(
   import.meta.env.VITE_CAD_ENGINE_SHX_BIGFONT_SCALE as string | undefined,
-  0.56,
+  0.75,
   0.1,
   2
 );
 
 export const CAD_ENGINE_SHX_TEXT_HEIGHT_SCALE = parsePositiveFloat(
   import.meta.env.VITE_CAD_ENGINE_SHX_TEXT_HEIGHT_SCALE as string | undefined,
-  1.12,
+  1.33,
   0.5,
   2
 );
 
 export const CAD_ENGINE_SHX_MTEXT_HEIGHT_SCALE = parsePositiveFloat(
   import.meta.env.VITE_CAD_ENGINE_SHX_MTEXT_HEIGHT_SCALE as string | undefined,
-  1.08,
+  1.0,
+  0.5,
+  2
+);
+
+export const CAD_ENGINE_SHX_BIGFONT_HEIGHT_SCALE = parsePositiveFloat(
+  import.meta.env.VITE_CAD_ENGINE_SHX_BIGFONT_HEIGHT_SCALE as string | undefined,
+  1.0,
   0.5,
   2
 );

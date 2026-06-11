@@ -29,6 +29,11 @@ export function normalizeCadTextForDisplay(value) {
     .replace(/\\n/g, '\n')
     .replace(/\\~/g, ' ');
 
+  // Strip AutoCAD %%nnn numeric glyph codes (SHX font-internal glyph indices,
+  // not Unicode code points — cannot be decoded without the specific font's
+  // glyph table, so remove them to avoid blank placeholder characters).
+  text = text.replace(/%%\d{1,3}/g, '');
+
   text = text.replace(/\\S([^;]*?)[#^/]([^;]*?);/gi, (_all, top, bottom) => `${top}/${bottom}`);
   text = text
     .replace(/\\[ACFHQTW][^;]*;/gi, '')
@@ -37,7 +42,8 @@ export function normalizeCadTextForDisplay(value) {
     .replace(/\r\n?/g, '\n')
     .replace(/\u0000/g, '');
 
-  return text.trim();
+  // 仅 trimEnd：保留前导空格（TEXT 排版意图），尾部空格视为脏数据。
+  return text.trimEnd();
 }
 
 export function normalizeObliqueToRadians(value) {

@@ -47,6 +47,7 @@ interface RetainedDwgSession {
   baseWarnings: string[];
   orderSignatureBySpace: Map<string, string>;
   closeTimer: number | null;
+  shxFontUrls?: { main?: string | null; bigfont?: string | null };
 }
 
 interface InFlightDwgOpen {
@@ -197,6 +198,7 @@ async function openDwgSessionForFile(rawFile: File, key: string): Promise<Retain
       baseWarnings,
       orderSignatureBySpace: new Map(orderSignatureBySpace),
       closeTimer: null,
+      shxFontUrls: opened.shx_font_urls,
     };
     retainedDwgSession = session;
     return session;
@@ -235,6 +237,7 @@ export function useCadDocumentLifecycle(input: UseCadDocumentLifecycleInput): Us
   const [nodes, setNodes] = useState<DwgHierarchyNode[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [treeConsistency, setTreeConsistency] = useState<TreeConsistencyDiagnostics | null>(null);
+  const [shxFontUrls, setShxFontUrls] = useState<{ main?: string | null; bigfont?: string | null } | undefined>();
   const baseWarningsRef = useRef<string[]>([]);
   const orderSignatureBySpaceRef = useRef<Map<string, string>>(new Map());
   const rawFileKey = useMemo(
@@ -291,6 +294,7 @@ export function useCadDocumentLifecycle(input: UseCadDocumentLifecycleInput): Us
       setTreeConsistency(session.loadedSpace.treeConsistency);
       baseWarningsRef.current = session.baseWarnings;
       orderSignatureBySpaceRef.current = new Map(session.orderSignatureBySpace);
+      setShxFontUrls(session.shxFontUrls);
       onResetExpandedIds(collectDefaultExpanded(session.loadedSpace.nodes));
       onResetHiddenLayerNames();
       onResetHiddenEntityIds();
@@ -393,5 +397,6 @@ export function useCadDocumentLifecycle(input: UseCadDocumentLifecycleInput): Us
     warnings,
     treeConsistency,
     loadSpace,
+    shxFontUrls,
   };
 }

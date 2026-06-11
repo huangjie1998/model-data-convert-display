@@ -71,6 +71,7 @@ export function CADViewerCadEngine({ rawFile }: CADViewerCadEngineProps) {
     warnings,
     treeConsistency,
     loadSpace,
+    shxFontUrls,
   } = useCadDocumentLifecycle({
     rawFile,
     apiRef,
@@ -151,6 +152,8 @@ export function CADViewerCadEngine({ rawFile }: CADViewerCadEngineProps) {
     resizeEngine,
     onOverlayTextsChange: setOverlayTexts,
     onError: setError,
+    docId,
+    shxFontUrls,
   });
 
   const diagnosticRows = useMemo(() => {

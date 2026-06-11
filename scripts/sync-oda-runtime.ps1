@@ -56,6 +56,7 @@ foreach ($file in $allFiles) {
     $name = $file.Name
     $ext = $file.Extension.ToLowerInvariant()
     if ($name -ieq "OdReadEx.exe" -or
+        $name -ieq "OdVectorizeEx.exe" -or
         $ext -eq ".manifest" -or
         $ext -eq ".dll" -or
         $ext -eq ".tx") {

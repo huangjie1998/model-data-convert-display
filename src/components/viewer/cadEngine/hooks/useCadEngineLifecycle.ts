@@ -104,7 +104,7 @@ export function useCadEngineLifecycle(input: UseCadEngineLifecycleInput): UseCad
       ctx.save();
       ctx.translate(screen.x, screen.y);
       ctx.rotate(-text.rotation);
-      ctx.font = `${px}px Arial,sans-serif`;
+      ctx.font = `${px}px Arial, SimSun, "Microsoft YaHei", "PingFang SC", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = parseColor(text.color);

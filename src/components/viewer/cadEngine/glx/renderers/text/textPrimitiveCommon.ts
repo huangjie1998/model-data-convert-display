@@ -42,12 +42,19 @@ export function renderClassifiedTextPrimitive(
       : actualHeight != null && actualHeight > 0
         ? actualHeight
         : undefined;
-  const height = Math.max(1, toNumber(isMText ? resolvedMTextHeight : (actualHeight ?? declaredHeight), 120));
+  const height = Math.max(1, toNumber(isMText ? resolvedMTextHeight : (declaredHeight ?? actualHeight), 120));
+  // For TEXT: only use explicit width (not actual_width which is a measured value
+  // that conflicts with width_factor in the engine's scaling logic).
+  // For MTEXT: use defined_width (the wrap width constraint).
   const width = isMText
-    ? 0
-    : toNumber(
-        parseFiniteNumber(record.actual_width) ??
+    ? toNumber(
+        parseFiniteNumber(record.defined_width) ??
           parseFiniteNumber(record.width) ??
+          parseFiniteNumber(record.text_width),
+        0
+      )
+    : toNumber(
+        parseFiniteNumber(record.width) ??
           parseFiniteNumber(record.defined_width) ??
           parseFiniteNumber(record.text_width),
         0
@@ -58,19 +65,24 @@ export function renderClassifiedTextPrimitive(
   const textMaskColor =
     parseColorFromUnknown(record.text_mask_color ?? record.text_bg_color ?? record.background_color) ?? undefined;
 
-  accumulator.overlayTexts.push({
-    entityId,
-    layer,
-    text,
-    x: position[0],
-    y: position[1],
-    height,
-    rotation,
-    color,
-  });
+  // When engine text is available, skip the overlay render — no dual path
+  const useOverlay = !accumulator.emitEngineText || !maybeEngineText(text);
+
+  if (useOverlay) {
+    accumulator.overlayTexts.push({
+      entityId,
+      layer,
+      text,
+      x: position[0],
+      y: position[1],
+      height,
+      rotation,
+      color,
+    });
+  }
 
   if (!accumulator.emitEngineText || !maybeEngineText(text)) {
-    return { rendered: true, overlayText: true, engineText: false };
+    return { rendered: true, overlayText: useOverlay, engineText: false };
   }
 
   const entityIndex = accumulator.entitiesJson.length;
@@ -105,6 +117,8 @@ export function renderClassifiedTextPrimitive(
       font_family: String(record.font_family ?? ''),
       font_kind: String(record.font_kind ?? ''),
       font_source: String(record.font_source ?? ''),
+      actual_width: toNumber(parseFiniteNumber(record.actual_width), 0),
+      actual_height: toNumber(parseFiniteNumber(record.actual_height), 0),
     },
   });
   addLayerChild(accumulator.layerChildren, layer, entityIndex);

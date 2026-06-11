@@ -12,18 +12,13 @@ from __future__ import annotations
 import json
 import math
 import os
-import re
-import shutil
-import subprocess
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
-from urllib import error as urllib_error
 from urllib import parse as urllib_parse
-from urllib import request as urllib_request
 
 from server.dwg.entities.primitive_builder import build_entity_primitives
 from server.dwg.entities.primitives_common import PrimitiveBuildContext
@@ -78,6 +73,8 @@ from server.dwg.oda.runtime import (
     vectorize_cache_put,
 )
 from server.dwg.text import vectorize as dwg_text_vectorize
+from server.dwg.shx_outline import build_shx_outline_primitives
+from server.dwg.external_proxy import DwgExternalHttpProxy, ExternalCoreError
 from server.dwg.common.affine import (
     Affine2D,
     _affine_scales,
@@ -114,8 +111,8 @@ from server.dwg.common.fonts import (
     _normalize_entity_instance_key,
     _normalize_font_token,
     _sanitize_font_key,
-    _shx_char_strokes,
 )
+from server.dwg.stroke_font import _shx_char_strokes
 from server.dwg.common.geometry import (
     _angle_deg,
     _bbox_from_points,
@@ -144,11 +141,8 @@ from server.dwg.common.oda_parse import (
     _parse_point_value,
 )
 
-class ExternalCoreError(RuntimeError):
-    def __init__(self, message: str, status_code: Optional[int] = None, body: Optional[str] = None):
-        super().__init__(message)
-        self.status_code = status_code
-        self.body = body
+# ExternalCoreError imported from server.dwg.external_proxy (see top of file).
+# Keep a backward-compatible alias for any code that does `from server.dwg_service_core import ExternalCoreError`.
 
 
 @dataclass
@@ -200,16 +194,13 @@ class DwgServiceCore:
         self.oda_vendor_root = (self.server_dir / "vendor" / "oda").resolve()
 
         self.mode = "stub"
+        self._external_proxy = DwgExternalHttpProxy.from_environment()
 
-        self.external_base_url = os.environ.get("DWG_CORE_BASE_URL", "").strip().rstrip("/")
-        # HTTP proxy mode timeout (when using an external DWG core service).
-        self.external_timeout_sec = max(1.0, float(os.environ.get("DWG_CORE_TIMEOUT_SEC", "60")))
-        self.external_auth_bearer = os.environ.get("DWG_CORE_AUTH_BEARER", "").strip()
-        self.external_prefix = ""
-
-        explicit_prefix = os.environ.get("DWG_CORE_PREFIX", "").strip().rstrip("/")
-        if explicit_prefix and not explicit_prefix.startswith("/"):
-            explicit_prefix = f"/{explicit_prefix}"
+        # Keep external_* attributes for backward compatibility with oda/runtime.py
+        self.external_base_url = (self._external_proxy._base_url if self._external_proxy else "")
+        self.external_timeout_sec = (self._external_proxy._timeout_sec if self._external_proxy else 60.0)
+        self.external_auth_bearer = (self._external_proxy._auth_bearer if self._external_proxy else "")
+        self.external_prefix = (self._external_proxy._prefix if self._external_proxy else "")
 
         # ODA CLI operations (OdReadEx/OdVectorizeEx) can be slow on large drawings.
         # Keep a longer default timeout to reduce false timeout failures in local usage.
@@ -232,7 +223,7 @@ class DwgServiceCore:
         self.oda_runtime_in_project = False
         self.oda_resolve_source: Optional[str] = None
         self.oda_read_exe = self._resolve_oda_read_exe(os.environ.get("ODA_READ_EXE", "").strip())
-        self.enable_shx_outline = os.environ.get("DWG_ENABLE_SHX_OUTLINE", "1").strip().lower() not in ("0", "false", "no")
+        self.enable_shx_outline = os.environ.get("DWG_ENABLE_SHX_OUTLINE", "0").strip().lower() not in ("0", "false", "no")
         self.enable_shx_outline_oda = os.environ.get("DWG_ENABLE_SHX_OUTLINE_ODA", "1").strip().lower() not in ("0", "false", "no")
         self.enable_shx_debug_match = os.environ.get("DWG_SHX_DEBUG_MATCH", "0").strip().lower() in ("1", "true", "yes")
         self.force_text_vectorize = os.environ.get("DWG_FORCE_TEXT_VECTORIZE", "0").strip().lower() in ("1", "true", "yes")
@@ -250,17 +241,8 @@ class DwgServiceCore:
         self._oda_read_lock = threading.Lock()
         self._oda_vectorize_lock = threading.Lock()
 
-        if self.external_base_url:
+        if self._external_proxy:
             self.mode = "external_http"
-            if explicit_prefix:
-                self.external_prefix = explicit_prefix
-            else:
-                parsed = urllib_parse.urlparse(self.external_base_url)
-                path = parsed.path.rstrip("/").lower()
-                if path.endswith("/api/dwg") or path.endswith("/dwg"):
-                    self.external_prefix = ""
-                else:
-                    self.external_prefix = "/api/dwg"
         elif self.oda_read_exe:
             self.mode = "oda_cli"
 
@@ -351,6 +333,8 @@ class DwgServiceCore:
         for root in self.font_search_roots:
             candidates.append(root / name_only)
             if not ext:
+                candidates.append(root / f"{stem}.shx")
+                candidates.append(root / f"{stem}.SHX")
                 candidates.append(root / f"{stem}.ttf")
                 candidates.append(root / f"{stem}.ttc")
                 candidates.append(root / f"{stem}.otf")
@@ -457,6 +441,7 @@ class DwgServiceCore:
 
     def _attach_oda_vectorized_text_primitives_with_debug(self, *args, **kwargs):
         return dwg_text_vectorize._attach_oda_vectorized_text_primitives_with_debug(self, *args, **kwargs)
+
     def _build_entity_from_oda(
         self,
         etype: str,
@@ -556,6 +541,11 @@ class DwgServiceCore:
         font_kind = str((style_rec or {}).get("font_kind") or _detect_font_kind(font_name) or "unknown").strip().lower() or "unknown"
         if bool((style_rec or {}).get("shape_file", False)):
             font_kind = "shx"
+        # If font_kind is still unknown, check if the resolved font file is SHX
+        if font_kind == "unknown" and font_name:
+            resolved = self._resolve_font_file(font_name)
+            if resolved and _detect_font_kind(str(resolved)) == "shx":
+                font_kind = "shx"
         font_source = "text_style_table" if style_rec else ("entity_style_name" if style_name else "fallback")
         font_key_seed = style_name or font_name or font_family or "default"
         font_key = _sanitize_font_key(font_key_seed)
@@ -1034,29 +1024,16 @@ class DwgServiceCore:
             },
         )
 
+    # ── external HTTP proxy (delegates to DwgExternalHttpProxy) ──
+
     def _external_url(self, path: str) -> str:
-        if not self.external_base_url:
-            raise ExternalCoreError("DWG_CORE_BASE_URL is not configured")
-        suffix = path if path.startswith("/") else f"/{path}"
-        return f"{self.external_base_url}{self.external_prefix}{suffix}"
+        return self._external_proxy._url(path) if self._external_proxy else ""
 
     def _external_headers(self) -> Dict[str, str]:
-        headers: Dict[str, str] = {}
-        if self.external_auth_bearer:
-            headers["Authorization"] = f"Bearer {self.external_auth_bearer}"
-        return headers
+        return self._external_proxy._headers() if self._external_proxy else {}
 
     def _decode_json_body(self, raw: bytes) -> Dict[str, object]:
-        text = (raw or b"").decode("utf-8", errors="replace").strip()
-        if not text:
-            return {}
-        try:
-            obj = json.loads(text)
-        except Exception as exc:
-            raise ExternalCoreError(f"invalid JSON from external DWG core: {exc}", body=text)
-        if not isinstance(obj, dict):
-            raise ExternalCoreError("external DWG core response must be a JSON object")
-        return obj
+        return DwgExternalHttpProxy._decode_json_body(raw) if self._external_proxy else {}
 
     def _external_request_json(
         self,
@@ -1065,58 +1042,14 @@ class DwgServiceCore:
         payload: Optional[Dict[str, object]] = None,
         extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, object]:
-        url = self._external_url(path)
-        body: Optional[bytes] = None
-        headers = self._external_headers()
-        if extra_headers:
-            headers.update(extra_headers)
-
-        if payload is not None:
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-
-        req = urllib_request.Request(url=url, data=body, method=method.upper(), headers=headers)
-        try:
-            with urllib_request.urlopen(req, timeout=self.external_timeout_sec) as resp:
-                return self._decode_json_body(resp.read())
-        except urllib_error.HTTPError as exc:
-            body_text = exc.read().decode("utf-8", errors="replace")
-            message = f"external DWG core HTTP {exc.code} on {path}"
-            raise ExternalCoreError(message, status_code=exc.code, body=body_text)
-        except urllib_error.URLError as exc:
-            raise ExternalCoreError(f"external DWG core unreachable on {path}: {exc}")
+        if not self._external_proxy:
+            raise ExternalCoreError("external DWG core mode not configured")
+        return self._external_proxy.request_json(method, path, payload, extra_headers)
 
     def _external_open_document(self, file_path: Path, original_name: str) -> Dict[str, object]:
-        url = self._external_url("/open")
-        boundary = f"----dwgcore{uuid.uuid4().hex}"
-        file_bytes = file_path.read_bytes()
-
-        lines: List[bytes] = []
-        lines.append(f"--{boundary}\r\n".encode("utf-8"))
-        lines.append(
-            (
-                f'Content-Disposition: form-data; name="file"; filename="{original_name}"\r\n'
-                "Content-Type: application/octet-stream\r\n\r\n"
-            ).encode("utf-8")
-        )
-        lines.append(file_bytes)
-        lines.append(b"\r\n")
-        lines.append(f"--{boundary}--\r\n".encode("utf-8"))
-        body = b"".join(lines)
-
-        headers = self._external_headers()
-        headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
-        req = urllib_request.Request(url=url, data=body, method="POST", headers=headers)
-
-        try:
-            with urllib_request.urlopen(req, timeout=self.external_timeout_sec) as resp:
-                return self._decode_json_body(resp.read())
-        except urllib_error.HTTPError as exc:
-            body_text = exc.read().decode("utf-8", errors="replace")
-            message = f"external DWG core HTTP {exc.code} on /open"
-            raise ExternalCoreError(message, status_code=exc.code, body=body_text)
-        except urllib_error.URLError as exc:
-            raise ExternalCoreError(f"external DWG core unreachable on /open: {exc}")
+        if not self._external_proxy:
+            raise ExternalCoreError("external DWG core mode not configured")
+        return self._external_proxy.open_document(file_path, original_name)
 
     def _strip_ok(self, payload: Dict[str, object]) -> Dict[str, object]:
         data = dict(payload)
@@ -1130,13 +1063,14 @@ class DwgServiceCore:
         suffix: str,
         payload: Optional[Dict[str, object]] = None,
     ) -> Dict[str, object]:
-        if not session.remote_doc_id:
-            raise ExternalCoreError("missing remote_doc_id in external_http session")
-        remote_id = urllib_parse.quote(session.remote_doc_id, safe="")
-        data = self._external_request_json(method, f"/{remote_id}{suffix}", payload)
-        data = self._strip_ok(data)
-        data["doc_id"] = session.doc_id
-        return data
+        if not self._external_proxy:
+            raise ExternalCoreError("external DWG core mode not configured")
+        return self._external_proxy.doc_request(
+            str(session.remote_doc_id or ""), method, suffix, payload,
+            local_doc_id=session.doc_id,
+        )
+
+    # ── health / open / close ──
 
     def health(self) -> Dict[str, object]:
         base: Dict[str, object] = {
@@ -1215,6 +1149,65 @@ class DwgServiceCore:
             return base
 
         return base
+
+    def _resolve_shx_font_urls(self, session: DwgDocSession, doc_id: str) -> Dict[str, Optional[str]]:
+        """Resolve the main SHX font and bigfont URLs for the engine to load."""
+        result: Dict[str, Optional[str]] = {"main": None, "bigfont": None}
+
+        # Find the main SHX font: the most-used SHX font_key from text styles
+        main_font_key: Optional[str] = None
+        main_font_count = 0
+        bigfont_key: Optional[str] = None
+
+        for style_rec in session.text_styles.values():
+            if not isinstance(style_rec, dict):
+                continue
+            style_name = str(style_rec.get("style_name") or "").strip()
+            font_name = str(style_rec.get("font_name") or "").strip()
+            bigfont_name = str(style_rec.get("bigfont_name") or "").strip()
+            font_kind = str(style_rec.get("font_kind") or "").strip().lower()
+            shape_file = bool(style_rec.get("shape_file", False))
+
+            is_shx = shape_file or font_kind == "shx" or _detect_font_kind(font_name) == "shx"
+            # Also check if the resolved font file is SHX (handles cases where
+            # font_name has no extension, e.g. "SIMPLEX" → resolves to "simplex.shx")
+            key = _sanitize_font_key(style_name or font_name)
+            if not is_shx and key in session.font_files:
+                is_shx = _detect_font_kind(session.font_files[key]) == "shx"
+            if not is_shx:
+                continue
+
+            if key not in session.font_files:
+                continue
+
+            count = sum(
+                1
+                for ents in session.entities_by_space.values()
+                for e in ents
+                if str((e.get("geom") or {}).get("style_name") or "") == style_name
+            )
+            if count > main_font_count:
+                main_font_count = count
+                main_font_key = key
+
+            if bigfont_name and bigfont_name.lower() not in ("", "none") and not bigfont_key:
+                bk = _sanitize_font_key(bigfont_name)
+                if bk in session.font_files:
+                    bigfont_key = bk
+                else:
+                    # Bigfont may not be in font_files (it's a property of the style, not a separate entity).
+                    # Resolve it directly and register it.
+                    resolved_bf = self._resolve_font_file(bigfont_name)
+                    if resolved_bf and resolved_bf.exists():
+                        session.font_files[bk] = str(resolved_bf)
+                        bigfont_key = bk
+
+        if main_font_key:
+            result["main"] = f"/api/dwg/{urllib_parse.quote(doc_id, safe='')}/fonts/{urllib_parse.quote(main_font_key, safe='')}/file"
+        if bigfont_key:
+            result["bigfont"] = f"/api/dwg/{urllib_parse.quote(doc_id, safe='')}/fonts/{urllib_parse.quote(bigfont_key, safe='')}/file"
+
+        return result
 
     def _build_stub_spaces(self, stem: str) -> Tuple[List[Dict[str, object]], Dict[str, List[Dict[str, object]]]]:
         spaces = [
@@ -1429,13 +1422,14 @@ class DwgServiceCore:
 
             shx_true_outline = shx_outline_mode == "oda_vectorize" and shx_vectorize_attached_count > 0
             shx_fallback_text_count = self._count_shx_text_fallback_entities(entities_by_space) if shx_detected else 0
-            shx_font_resolution_warning = self._build_shx_font_resolution_warning(
-                text_styles=text_styles,
-                shx_detected=shx_detected,
-                shx_true_outline=shx_true_outline,
-            )
-            if shx_font_resolution_warning:
-                warnings.append(shx_font_resolution_warning)
+            if self.enable_shx_outline:
+                shx_font_resolution_warning = self._build_shx_font_resolution_warning(
+                    text_styles=text_styles,
+                    shx_detected=shx_detected,
+                    shx_true_outline=shx_true_outline,
+                )
+                if shx_font_resolution_warning:
+                    warnings.append(shx_font_resolution_warning)
             missing_font_warning = self._build_missing_font_warning(text_styles)
             if missing_font_warning:
                 warnings.append(missing_font_warning)
@@ -1479,19 +1473,21 @@ class DwgServiceCore:
             session.shx_fallback_hit_count = int(shx_diag.get("fallback_hit_count") or 0)
             session.shx_diagnostics_unavailable = bool(shx_diag.get("diagnostics_unavailable"))
 
-            if session.shx_missing_original_fonts:
-                missing_text = self._format_missing_font_names(session.shx_missing_original_fonts)
-                fallback_note = f"，已使用后备字体 {session.shx_fallback_file_name}" if session.shx_fallback_file_name else ""
-                warning_text = f"未命中原始 SHX 字体：{missing_text}{fallback_note}。"
-                if warning_text not in warnings:
-                    warnings.append(warning_text)
-            elif session.shx_detected and not session.shx_true_outline and session.shx_resolved_original_fonts:
-                warning_text = "原始 SHX 字体已命中，当前降级更可能由轮廓匹配失败导致。"
-                if warning_text not in warnings:
-                    warnings.append(warning_text)
+            if self.enable_shx_outline:
+                if session.shx_missing_original_fonts:
+                    missing_text = self._format_missing_font_names(session.shx_missing_original_fonts)
+                    fallback_note = f"，已使用后备字体 {session.shx_fallback_file_name}" if session.shx_fallback_file_name else ""
+                    warning_text = f"未命中原始 SHX 字体：{missing_text}{fallback_note}。"
+                    if warning_text not in warnings:
+                        warnings.append(warning_text)
+                elif session.shx_detected and not session.shx_true_outline and session.shx_resolved_original_fonts:
+                    warning_text = "原始 SHX 字体已命中，当前降级更可能由轮廓匹配失败导致。"
+                    if warning_text not in warnings:
+                        warnings.append(warning_text)
 
             session.view_state["entity_count"] = total_entities
             self.sessions[doc_id] = session
+            shx_font_urls = self._resolve_shx_font_urls(session, doc_id)
             return {
                 "doc_id": doc_id,
                 "mode": session.mode,
@@ -1501,6 +1497,7 @@ class DwgServiceCore:
                 "shx_outline_mode": shx_outline_mode,
                 "warnings": warnings,
                 "shx_status": self._build_shx_status(session),
+                "shx_font_urls": shx_font_urls,
             }
 
         doc_id = str(uuid.uuid4())
@@ -1868,7 +1865,6 @@ class DwgServiceCore:
             if (
                 not resolved
                 and kind == "shx"
-                and self.enable_shx_outline
                 and self.shx_fallback_file.exists()
                 and self.shx_fallback_file.is_file()
             ):
@@ -1888,8 +1884,10 @@ class DwgServiceCore:
                     file_url = f"/api/dwg/{session.doc_id}/fonts/{urllib_parse.quote(key, safe='')}/file"
                     font_files[key] = str(resolved)
                 elif kind == "shx":
+                    available = True
+                    file_url = f"/api/dwg/{session.doc_id}/fonts/{urllib_parse.quote(key, safe='')}/file"
+                    font_files[key] = str(resolved)
                     if self.enable_shx_outline:
-                        available = True
                         if shx_mode == "oda_vectorize":
                             if fallback_shx_hit:
                                 reason = f"SHX rendered by ODA vectorized glyph outlines (fallback: {self.shx_fallback_file.name})."
@@ -2060,115 +2058,7 @@ class DwgServiceCore:
         }
 
     def _build_shx_outline_primitives(self, geom: Dict[str, object]) -> List[Dict[str, object]]:
-        text = str(geom.get("text", ""))
-        if not text:
-            return []
-        position = geom.get("position")
-        if not isinstance(position, dict):
-            return []
-        lines = text.replace("\r", "").split("\n")
-        if not lines:
-            return []
-
-        is_mtext = bool(geom.get("is_mtext", False))
-        text_vertical = bool(geom.get("text_vertical", False))
-        height_source = geom.get("height") if is_mtext or text_vertical else geom.get("actual_height", geom.get("height", 100.0))
-        try:
-            height = float(height_source)
-        except Exception:
-            height = 100.0
-        if not math.isfinite(height) or height <= 1e-9:
-            return []
-        try:
-            width_factor = float(geom.get("width_factor", 1.0))
-        except Exception:
-            width_factor = 1.0
-        if not math.isfinite(width_factor) or width_factor <= 0:
-            width_factor = 1.0
-        try:
-            oblique_deg = float(geom.get("oblique", 0.0))
-        except Exception:
-            oblique_deg = 0.0
-        try:
-            rotation_deg = float(geom.get("rotation", 0.0))
-        except Exception:
-            rotation_deg = 0.0
-        mirrored_x = bool(geom.get("mirrored_x", False))
-        mirrored_y = bool(geom.get("mirrored_y", False))
-        shear = math.tan(math.radians(oblique_deg))
-        rot_rad = math.radians(rotation_deg)
-        cos_r = math.cos(rot_rad)
-        sin_r = math.sin(rot_rad)
-
-        base_x = float(position.get("x", 0.0))
-        base_y = float(position.get("y", 0.0))
-        base_z = float(position.get("z", 0.0))
-
-        line_gap = height * (1.22 if is_mtext else 1.0)
-        char_w = height * 0.62 * width_factor
-        advance = height * 0.72 * width_factor
-        try:
-            target_width = float(geom.get("actual_width", 0.0))
-        except Exception:
-            target_width = 0.0
-        max_line_len = max((len(line) for line in lines), default=0)
-        natural_width = max(0.0, max_line_len * advance)
-        fit_x_scale = 1.0
-        if (
-            not text_vertical
-            and not is_mtext
-            and abs(math.sin(rot_rad)) < 0.985
-            and
-            math.isfinite(target_width)
-            and target_width > 1e-9
-            and math.isfinite(natural_width)
-            and natural_width > 1e-9
-            and str(geom.get("text_extents_source") or "").strip().lower() in ("oda_bbox", "oda_actual_width")
-        ):
-            fit_x_scale = max(1e-6, min(1000.0, target_width / natural_width))
-
-        outlines: List[Dict[str, object]] = []
-        for line_index, line in enumerate(lines):
-            x_cursor = 0.0
-            y_offset = -line_index * line_gap
-            for char_index, ch in enumerate(line):
-                glyph = _shx_char_strokes(ch)
-                if glyph is None:
-                    # Unknown character, let frontend text fallback render this entity.
-                    return []
-                if glyph:
-                    for stroke in glyph:
-                        if len(stroke) < 2:
-                            continue
-                        points: List[Dict[str, float]] = []
-                        for px, py in stroke:
-                            x_local = x_cursor + px * char_w
-                            y_local = y_offset + py * height
-                            if text_vertical:
-                                x_local = line_index * line_gap + px * char_w
-                                y_local = -(char_index * line_gap) + py * height
-                            x_local *= fit_x_scale
-                            if mirrored_x:
-                                x_local = -x_local
-                            if mirrored_y:
-                                y_local = -y_local
-                            x_sheared = x_local + shear * y_local
-                            y_sheared = y_local
-                            xr = x_sheared * cos_r - y_sheared * sin_r
-                            yr = x_sheared * sin_r + y_sheared * cos_r
-                            points.append({"x": base_x + xr, "y": base_y + yr, "z": base_z})
-                        if len(points) >= 2:
-                            outlines.append(
-                                {
-                                    "kind": "polyline",
-                                    "points": points,
-                                    "closed": False,
-                                    "subtype": "shx_outline",
-                                }
-                            )
-                if not text_vertical:
-                    x_cursor += advance
-        return outlines
+        return build_shx_outline_primitives(geom)
 
     def _primitive_build_context(self) -> PrimitiveBuildContext:
         return PrimitiveBuildContext(
@@ -2265,6 +2155,14 @@ class DwgServiceCore:
         out = dict(ent)
         geom_out = dict(geom)
         geom_out["source_type"] = str(geom_out.get("source_type") or str(ent.get("type", "")).upper())
+        # Re-check font_kind if unknown (fallback for cases where _attach_text_font_meta
+        # didn't resolve it, e.g. font_name without extension like "SIMPLEX")
+        if str(geom_out.get("font_kind", "")).strip().lower() in ("unknown", ""):
+            fn = str(geom_out.get("font_name") or "").strip()
+            if fn:
+                resolved = self._resolve_font_file(fn)
+                if resolved and _detect_font_kind(str(resolved)) == "shx":
+                    geom_out["font_kind"] = "shx"
         ent_type = str(ent.get("type", "")).upper()
         primitives = self._entity_primitives(ent)
 

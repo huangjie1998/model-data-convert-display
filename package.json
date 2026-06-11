@@ -10,6 +10,7 @@
     "build:cad-whitebox": "npm run build:cad-runtime",
     "test:drawing1-tree-consistency": "py server/scripts/check_drawing1_tree_consistency.py",
     "test:dwg-acceptance": "py server/scripts/check_dwg_acceptance.py",
+    "debug:shx-glyph": "node scripts/debug-shx-glyph.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

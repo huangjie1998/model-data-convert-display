@@ -14,6 +14,100 @@ import type {
 } from './types';
 import { layerOrderFromEntities, normalizeLayerName, pointXY, pointsFromUnknown, primitiveColor, primitiveKind, resolveEntityColor } from './utils';
 
+/**
+ * Ear-clipping triangulation for simple polygons (convex or concave).
+ * Returns triangle indices as flat array [i0,i1,i2, i0,i1,i2, ...].
+ */
+function earClipTriangles(pts: Array<[number, number]>): number[] {
+  const n = pts.length;
+  if (n < 3) return [];
+  if (n === 3) return [0, 1, 2];
+
+  // Signed area: positive = CCW, negative = CW
+  let area2 = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area2 += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+  }
+  const ccw = area2 > 0;
+
+  // Working index list
+  const indices: number[] = [];
+  for (let i = 0; i < n; i++) indices.push(i);
+
+  const result: number[] = [];
+  let remaining = n;
+  let safetyCounter = remaining * 3; // prevent infinite loops on degenerate input
+
+  while (remaining > 2 && safetyCounter-- > 0) {
+    let earFound = false;
+    for (let i = 0; i < remaining; i++) {
+      const prev = (i + remaining - 1) % remaining;
+      const next = (i + 1) % remaining;
+      const ai = indices[prev];
+      const bi = indices[i];
+      const ci = indices[next];
+      const ax = pts[ai][0], ay = pts[ai][1];
+      const bx = pts[bi][0], by = pts[bi][1];
+      const cx = pts[ci][0], cy = pts[ci][1];
+
+      // Cross product: determines convexity at vertex b
+      const cross = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+      if (ccw ? cross <= 0 : cross >= 0) continue; // reflex vertex
+
+      // Check no other vertex lies inside this triangle
+      let hasInteriorPoint = false;
+      for (let k = 0; k < remaining; k++) {
+        const ki = indices[k];
+        if (ki === ai || ki === bi || ki === ci) continue;
+        const px = pts[ki][0], py = pts[ki][1];
+        const d1 = sign(px, py, ax, ay, bx, by);
+        const d2 = sign(px, py, bx, by, cx, cy);
+        const d3 = sign(px, py, cx, cy, ax, ay);
+        const hasNeg = d1 < 0 || d2 < 0 || d3 < 0;
+        const hasPos = d1 > 0 || d2 > 0 || d3 > 0;
+        if (!(hasNeg && hasPos)) {
+          hasInteriorPoint = true;
+          break;
+        }
+      }
+      if (hasInteriorPoint) continue;
+
+      // This is an ear
+      result.push(ai, bi, ci);
+      indices.splice(i, 1);
+      remaining--;
+      earFound = true;
+      break;
+    }
+    if (!earFound) break; // degenerate polygon
+  }
+  return result;
+}
+
+function sign(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  return (ax - px) * (by - py) - (bx - px) * (ay - py);
+}
+
+function isConvex(pts: Array<[number, number]>): boolean {
+  const n = pts.length;
+  if (n < 3) return true;
+  let area2 = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area2 += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+  }
+  const ccw = area2 > 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const k = (i + 2) % n;
+    const cross = (pts[j][0] - pts[i][0]) * (pts[k][1] - pts[i][1])
+                - (pts[j][1] - pts[i][1]) * (pts[k][0] - pts[i][0]);
+    if (ccw ? cross < 0 : cross > 0) return false;
+  }
+  return true;
+}
+
 const MAX_FLOATS_PER_MESH_CHUNK = 16384;
 const FLOATS_PER_LINE_SEGMENT = 4;
 const FLOATS_PER_TRIANGLE = 6;
@@ -54,12 +148,31 @@ function renderFilledPolygonPrimitive(target: number[], primitive: PrimitiveReco
   const anchor = pointXY(shell[0]);
   if (!anchor) return false;
 
+  const shellPts: Array<[number, number]> = shell.map((p) => {
+    const xy = pointXY(p);
+    return xy ? [xy[0], xy[1]] : [0, 0];
+  });
+
+  // Use fast fan triangulation for convex polygons, ear-clipping for concave
+  let indices: number[];
+  if (shellPts.length <= 3 || isConvex(shellPts)) {
+    // Fan triangulation (fast path for convex shapes)
+    indices = [];
+    for (let i = 1; i + 1 < shellPts.length; i += 1) {
+      indices.push(0, i, i + 1);
+    }
+  } else {
+    // Ear-clipping (handles concave polygons correctly)
+    indices = earClipTriangles(shellPts);
+  }
+
   let triCount = 0;
-  for (let i = 1; i + 1 < shell.length; i += 1) {
-    const b = pointXY(shell[i]);
-    const c = pointXY(shell[i + 1]);
-    if (!b || !c) continue;
-    target.push(anchor[0], anchor[1]);
+  for (let t = 0; t + 2 < indices.length; t += 3) {
+    const a = shellPts[indices[t]];
+    const b = shellPts[indices[t + 1]];
+    const c = shellPts[indices[t + 2]];
+    if (!a || !b || !c) continue;
+    target.push(a[0], a[1]);
     target.push(b[0], b[1]);
     target.push(c[0], c[1]);
     triCount += 1;
@@ -141,11 +254,10 @@ function buildMeshes(
 }
 
 export function buildCadEngineGlx(entities: DwgEntityLite[], options: BuildGlxOptions = {}): BuildGlxResult {
-  const hiddenLayerNames = options.hiddenLayerNames ?? new Set<string>();
   const hiddenEntityIds = options.hiddenEntityIds ?? new Set<string>();
   const emitEngineText = options.emitEngineText ?? true;
 
-  const layers = layerOrderFromEntities(entities).filter((layer) => !hiddenLayerNames.has(layer));
+  const layers = layerOrderFromEntities(entities);
   const layerChildren = new Map<string, number[]>();
   const meshBuckets = new Map<string, MeshBucket>();
 
@@ -201,7 +313,7 @@ export function buildCadEngineGlx(entities: DwgEntityLite[], options: BuildGlxOp
   for (const entity of entities) {
     diagnostics.entitiesInput += 1;
     const layer = normalizeLayerName(entity.layer);
-    if (hiddenLayerNames.has(layer) || hiddenEntityIds.has(entity.id)) {
+    if (hiddenEntityIds.has(entity.id)) {
       diagnostics.entitiesHidden += 1;
       continue;
     }

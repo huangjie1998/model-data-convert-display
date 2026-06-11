@@ -161,7 +161,7 @@ function normalizeArrowToken(raw: unknown): string {
 function normalizeArrowStyle(raw: unknown): ArrowDescriptor['style'] {
   const source = String(raw ?? '').trim().toLowerCase();
   const token = normalizeArrowToken(raw);
-  if (!token || token === 'null' || token === 'none' || token === '_none') return 'closed_filled';
+  if (!token || token === 'null') return 'closed_filled';
   if (token === 'none' || token === '_none' || token === 'non') return 'none';
   if (token.includes('none') && !token.includes('open')) return 'none';
   if (source.includes('archtick') || token.includes('architecturaltick') || source.includes('tick') || source.includes('oblique')) {

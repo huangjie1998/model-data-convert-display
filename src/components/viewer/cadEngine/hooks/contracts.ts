@@ -70,6 +70,8 @@ export interface UseCadSceneRenderInput {
   resizeEngine: () => void;
   onOverlayTextsChange: (texts: OverlayTextItem[]) => void;
   onError: (message: string) => void;
+  docId?: string | null;
+  shxFontUrls?: { main?: string | null; bigfont?: string | null };
 }
 
 export interface UseCadSceneRenderResult {
@@ -119,6 +121,7 @@ export interface UseCadDocumentLifecycleResult {
   warnings: string[];
   treeConsistency: TreeConsistencyDiagnostics | null;
   loadSpace: (activeDocId: string, spaceId: string) => Promise<unknown>;
+  shxFontUrls?: { main?: string | null; bigfont?: string | null };
 }
 
 export interface UseCadViewStateInput {

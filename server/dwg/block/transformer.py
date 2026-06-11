@@ -191,23 +191,28 @@ def transform_entity(ent: Dict[str, object], tf: Affine2D) -> Optional[Dict[str,
                 return None
             t_pos = _apply_affine(tf, pos)
             sx, sy = _affine_scales(tf)
-            scale_avg = max(1e-9, (abs(sx) + abs(sy)) * 0.5)
+            abs_sx = max(1e-9, abs(sx))
+            abs_sy = max(1e-9, abs(sy))
+            # AutoCAD: text height uses Y scale, width_factor uses X/Y ratio
             local_rot = float(geom.get("rotation", 0.0))
             tf_rot = math.degrees(math.atan2(tf[2], tf[0]))
-            t_height = max(1e-9, float(geom.get("height", 100.0)) * scale_avg)
-            t_width = float(geom.get("width", 0.0)) * scale_avg
+            t_height = max(1e-9, float(geom.get("height", 100.0)) * abs_sy)
+            t_width = float(geom.get("width", 0.0)) * abs_sx
             actual_width_raw = geom.get("actual_width")
             actual_height_raw = geom.get("actual_height")
             t_actual_width = (
-                float(actual_width_raw) * scale_avg
+                float(actual_width_raw) * abs_sx
                 if isinstance(actual_width_raw, (int, float)) and math.isfinite(float(actual_width_raw)) and float(actual_width_raw) > 0
                 else t_width
             )
             t_actual_height = (
-                float(actual_height_raw) * scale_avg
+                float(actual_height_raw) * abs_sy
                 if isinstance(actual_height_raw, (int, float)) and math.isfinite(float(actual_height_raw)) and float(actual_height_raw) > 0
                 else t_height
             )
+            # Adjust width_factor for non-uniform block scale (X/Y ratio)
+            orig_wf = float(geom.get("width_factor", 1.0))
+            t_width_factor = max(1e-6, orig_wf * (abs_sx / abs_sy))
             transformed["geom"] = {
                 "text": text,
                 "position": t_pos,
@@ -215,7 +220,7 @@ def transform_entity(ent: Dict[str, object], tf: Affine2D) -> Optional[Dict[str,
                 "rotation": local_rot + tf_rot,
                 "width": t_width,
                 "actual_width": t_actual_width,
-                "width_factor": float(geom.get("width_factor", 1.0)),
+                "width_factor": t_width_factor,
                 "is_mtext": bool(geom.get("is_mtext", False)),
                 "is_attribute": bool(geom.get("is_attribute", False)),
                 "attribute_kind": geom.get("attribute_kind"),

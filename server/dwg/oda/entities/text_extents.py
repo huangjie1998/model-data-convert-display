@@ -26,6 +26,15 @@ def _bbox_min_max(bbox: object) -> Optional[Tuple[float, float, float, float]]:
     return min(min_x, max_x), min(min_y, max_y), max(min_x, max_x), max(min_y, max_y)
 
 
+def _bbox_height_from_raw(bbox: object) -> Optional[float]:
+    """从原始 bbox 中提取未经 declared_height 覆盖的真实高度。"""
+    mm = _bbox_min_max(bbox)
+    if mm is None:
+        return None
+    _, min_y, _, max_y = mm
+    return max_y - min_y
+
+
 def _project_bbox_to_text_axes(bbox: object, rotation_deg: object = 0.0) -> Tuple[Optional[float], Optional[float]]:
     mm = _bbox_min_max(bbox)
     if mm is None:
@@ -109,12 +118,22 @@ def apply_text_extents_to_geom(geom: Dict[str, object], bbox: object, *, source:
         is_mtext=is_mtext,
         text_vertical=text_vertical,
     )
+    # 始终用原始 bbox 高度（不经过 declared_height 覆盖），用于锚点计算
+    raw_bbox_height = _bbox_height_from_raw(bbox)
     if width is not None:
         geom["actual_width"] = width
         geom["bbox_width"] = width
-    if height is not None:
+    if raw_bbox_height is not None and raw_bbox_height > 1e-9:
+        geom["bbox_height"] = raw_bbox_height
+    elif height is not None:
         geom["bbox_height"] = height
-    if height is not None and not is_mtext and not text_vertical:
+    # actual_height: 对 MTEXT 保留 ODA 原值；对 TEXT 使用原始 bbox 高度
+    if is_mtext:
+        # MTEXT 的 actual_height 来自 ODA dump 的 "Actual Height" 字段，不覆盖
+        pass
+    elif raw_bbox_height is not None and raw_bbox_height > 1e-9 and not text_vertical:
+        geom["actual_height"] = raw_bbox_height
+    elif height is not None and not text_vertical:
         geom["actual_height"] = height
     if width is not None or height is not None:
         geom["text_extents_source"] = source

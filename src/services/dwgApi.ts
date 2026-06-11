@@ -20,6 +20,7 @@ export interface DwgOpenResponse {
   current_space: string;
   warnings: string[];
   shx_outline_mode?: string;
+  shx_font_urls?: { main?: string | null; bigfont?: string | null };
   shx_status?: {
     detected: boolean;
     outline_mode: 'none' | 'oda_vectorize' | 'stub' | 'disabled' | string;
