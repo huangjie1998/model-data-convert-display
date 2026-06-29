@@ -711,26 +711,8 @@ export class Scene3D {
     return this._wrapTextToWidth(this._sanitizeTextForFont(text), textPayload);
   }
 
-  _shxTextTokens(text) {
-    const tokens = [];
-    const source = String(text || '');
-    for (let i = 0; i < source.length; i += 1) {
-      if (source[i] === '%' && source[i + 1] === '%') {
-        const match = source.slice(i + 2).match(/^\d{1,3}/);
-        if (match) {
-          tokens.push({ text: source.slice(i, i + 2 + match[0].length), shxCode: Number.parseInt(match[0], 10) });
-          i += 1 + match[0].length;
-          continue;
-        }
-      }
-      tokens.push(source[i]);
-    }
-    return tokens;
-  }
-
   _shxCodeForChar(char) {
-    if (char && typeof char === 'object' && Number.isFinite(char.shxCode)) return char.shxCode;
-    const codePoint = String(char || '').codePointAt(0);
+    const codePoint = char.codePointAt(0);
     if (!Number.isFinite(codePoint)) return null;
     if (this._shxBigFontCodeMap && Object.prototype.hasOwnProperty.call(this._shxBigFontCodeMap, char)) {
       const mapped = Number(this._shxBigFontCodeMap[char]);
@@ -811,10 +793,8 @@ export class Scene3D {
 
   _resolveShxGlyph(char, textPayload, recordMissing = true) {
     if (!char || char === '\n') return null;
-    const isShxCodeToken = char && typeof char === 'object' && Number.isFinite(char.shxCode);
-    const charText = isShxCodeToken ? String(char.text || '') : char;
-    const codePoint = isShxCodeToken ? char.shxCode : charText.codePointAt(0);
-    const shxCode = isShxCodeToken ? char.shxCode : this._shxCodeForChar(charText);
+    const codePoint = char.codePointAt(0);
+    const shxCode = this._shxCodeForChar(char);
     const bigFontSize = this._shxGlyphFontSize(textPayload, 'bigfont');
 
     // 1. 优先使用文字实体指定的 SHX 字体（如 SIMPLEX.SHX / ACCI-KT.SHX）。
@@ -922,7 +902,7 @@ export class Scene3D {
       }
     }
 
-    if (charText === '\t') return null;
+    if (char === '\t') return null;
 
     // 全角空格 (U+3000) 的回退：BigFont 通常有 0xA1A1（已在第 3 步查询过），
     // 如果 BigFont 没有该字形，退一步用主 SHX 的半角空格 *32 给出 advancePoint。
@@ -951,14 +931,14 @@ export class Scene3D {
     }
 
     if (recordMissing) {
-      if (charText === '?') {
+      if (char === '?') {
         this._textDiagnostics.sourceQuestionMarkCount += 1;
       } else {
-        this._recordMissingGlyph(charText);
+        this._recordMissingGlyph(char);
       }
     }
 
-    if (this._shxFont && charText !== '?') {
+    if (this._shxFont && char !== '?') {
       const fallbackCadShape = this._shxFont.getCadCharShape('?'.codePointAt(0), {
         fontSize: this._shxGlyphFontSizeForFont(textPayload, this._shxFont),
         verticalText: textPayload?.verticalText === true,
@@ -1028,8 +1008,7 @@ export class Scene3D {
    * 走 '?' 回退字形的 advancePoint；这是 "找不到字符"，与 "找到字符但没前进点" 不同。
    */
   _shxGlyphAdvance(char, textPayload, recordMissing = false) {
-    const charText = char && typeof char === 'object' ? String(char.text || '') : char;
-    if (charText === '\t') {
+    if (char === '\t') {
       const height = Math.max(1e-6, toFiniteNumber(textPayload?.height, 1));
       return height * 1.8;
     }
@@ -1043,7 +1022,7 @@ export class Scene3D {
     if (!Number.isFinite(advancePointX) || advancePointX <= 0) {
       this._recordShxZeroAdvance(char, glyph);
       throw new Error(
-        `SHX glyph has no advancePoint: char=${JSON.stringify(charText)} ` +
+        `SHX glyph has no advancePoint: char=${JSON.stringify(char)} ` +
         `code=${glyph?.code} source=${glyph?.source} ` +
         `lastPoint=${JSON.stringify(glyph?.shape?.lastPoint)}`
       );
@@ -1057,8 +1036,7 @@ export class Scene3D {
       this._textDiagnostics.shxZeroAdvanceCount = 0;
     }
     this._textDiagnostics.shxZeroAdvanceCount += 1;
-    const charCode = char && typeof char === 'object' ? char.shxCode : char.codePointAt(0);
-    const key = `${glyph?.source || 'unknown'}:${glyph?.code ?? charCode}`;
+    const key = `${glyph?.source || 'unknown'}:${glyph?.code ?? char.codePointAt(0)}`;
     if (this._textDiagnostics.shxZeroAdvanceSamples.length < MAX_TEXT_MISSING_GLYPH_SAMPLES &&
         !this._textDiagnostics.shxZeroAdvanceSamples.includes(key)) {
       this._textDiagnostics.shxZeroAdvanceSamples.push(key);
@@ -1098,7 +1076,7 @@ export class Scene3D {
   _shxTextLineAdvance(text, textPayload, recordMissing = false) {
     const widthFactor = safeWidthFactor(textPayload?.widthFactor);
     let advance = 0;
-    for (const char of this._shxTextTokens(text)) {
+    for (const char of String(text || '')) {
       if (char === '\n') continue;
       advance += this._shxGlyphAdvance(char, textPayload, recordMissing);
     }
@@ -1121,7 +1099,7 @@ export class Scene3D {
     const text = normalizeCadTextForDisplay(textPayload?.text);
     if (!text) return [];
     if (textPayload?.verticalText === true) {
-      return this._shxTextTokens(text).filter((char) => char !== '\n');
+      return [...text].filter((char) => char !== '\n');
     }
     return [text];
   }
@@ -1133,7 +1111,7 @@ export class Scene3D {
     const text = normalizeCadTextForDisplay(textPayload?.text);
     if (!text) return [];
     if (textPayload?.verticalText === true) {
-      return this._shxTextTokens(text).filter((char) => char !== '\n');
+      return [...text].filter((char) => char !== '\n');
     }
     const lines = this._wrapTextToWidth(text, textPayload, (line) => this._shxTextLineAdvance(line, textPayload, false));
     const width = toFiniteNumber(textPayload?.width, 0);
@@ -1262,7 +1240,7 @@ export class Scene3D {
       const lineY = -i * lineHeight;
       let cursorX = 0;
 
-      for (const char of this._shxTextTokens(line)) {
+      for (const char of line) {
         const advance = advanceFn(char, textPayload, true);
         const glyph = this._resolveShxGlyph(char, textPayload, false);
         // getCadCharShape 返回的坐标已按 fontSize 缩放，不需要额外的 bigfontScale

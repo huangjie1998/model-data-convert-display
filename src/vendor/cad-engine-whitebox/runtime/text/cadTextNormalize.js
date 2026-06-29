@@ -57,6 +57,11 @@ export function normalizeCadTextForDisplay(value) {
     .replace(/\\n/g, '\n')
     .replace(/\\~/g, ' ');
 
+  // Strip AutoCAD %%nnn numeric glyph codes (SHX font-internal glyph indices,
+  // not Unicode code points — cannot be decoded without the specific font's
+  // glyph table, so remove them to avoid blank placeholder characters).
+  text = text.replace(/%%\d{1,3}/g, '');
+
   text = text.replace(/\\S([^;]*?)[#^/]([^;]*?);/gi, (_all, top, bottom) => `${top}/${bottom}`);
   text = text
     .replace(/\\[ACFHQTW][^;]*;/gi, '')

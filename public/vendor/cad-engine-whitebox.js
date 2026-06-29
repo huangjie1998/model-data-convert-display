@@ -31764,6 +31764,7 @@ void main() {
     let text = decodeCadPercentEscapes(decodeCadUnicodeEscapes(value));
     if (!text) return "";
     text = text.replace(/\u33A1/g, "m2").replace(/\\P/gi, "\n").replace(/\\n/g, "\n").replace(/\\~/g, " ");
+    text = text.replace(/%%\d{1,3}/g, "");
     text = text.replace(/\\S([^;]*?)[#^/]([^;]*?);/gi, (_all, top, bottom) => `${top}/${bottom}`);
     text = text.replace(/\\[ACFHQTW][^;]*;/gi, "").replace(/\\[LOK]/gi, "").replace(/[{}]/g, "").replace(/\r\n?/g, "\n").replace(/\u0000/g, "");
     return text.trimEnd();
@@ -32493,25 +32494,8 @@ void main() {
       }
       return this._wrapTextToWidth(this._sanitizeTextForFont(text), textPayload);
     }
-    _shxTextTokens(text) {
-      const tokens = [];
-      const source = String(text || "");
-      for (let i = 0; i < source.length; i += 1) {
-        if (source[i] === "%" && source[i + 1] === "%") {
-          const match = source.slice(i + 2).match(/^\d{1,3}/);
-          if (match) {
-            tokens.push({ text: source.slice(i, i + 2 + match[0].length), shxCode: Number.parseInt(match[0], 10) });
-            i += 1 + match[0].length;
-            continue;
-          }
-        }
-        tokens.push(source[i]);
-      }
-      return tokens;
-    }
     _shxCodeForChar(char) {
-      if (char && typeof char === "object" && Number.isFinite(char.shxCode)) return char.shxCode;
-      const codePoint = String(char || "").codePointAt(0);
+      const codePoint = char.codePointAt(0);
       if (!Number.isFinite(codePoint)) return null;
       if (this._shxBigFontCodeMap && Object.prototype.hasOwnProperty.call(this._shxBigFontCodeMap, char)) {
         const mapped = Number(this._shxBigFontCodeMap[char]);
@@ -32582,10 +32566,8 @@ void main() {
     _resolveShxGlyph(char, textPayload, recordMissing = true) {
       var _a, _b;
       if (!char || char === "\n") return null;
-      const isShxCodeToken = char && typeof char === "object" && Number.isFinite(char.shxCode);
-      const charText = isShxCodeToken ? String(char.text || "") : char;
-      const codePoint = isShxCodeToken ? char.shxCode : charText.codePointAt(0);
-      const shxCode = isShxCodeToken ? char.shxCode : this._shxCodeForChar(charText);
+      const codePoint = char.codePointAt(0);
+      const shxCode = this._shxCodeForChar(char);
       const bigFontSize = this._shxGlyphFontSize(textPayload, "bigfont");
       const entityFontKey = textPayload == null ? void 0 : textPayload.fontKey;
       const entityFont = this._getShxFontByKey(entityFontKey);
@@ -32677,7 +32659,7 @@ void main() {
           return { shape, source: "rebar", code: codePoint };
         }
       }
-      if (charText === "	") return null;
+      if (char === "	") return null;
       if (codePoint === 12288) {
         if (this._shxFont && this._shxFont.hasChar(32)) {
           const cadShape = this._shxFont.getCadCharShape(32, {
@@ -32701,13 +32683,13 @@ void main() {
         }
       }
       if (recordMissing) {
-        if (charText === "?") {
+        if (char === "?") {
           this._textDiagnostics.sourceQuestionMarkCount += 1;
         } else {
-          this._recordMissingGlyph(charText);
+          this._recordMissingGlyph(char);
         }
       }
-      if (this._shxFont && charText !== "?") {
+      if (this._shxFont && char !== "?") {
         const fallbackCadShape = this._shxFont.getCadCharShape("?".codePointAt(0), {
           fontSize: this._shxGlyphFontSizeForFont(textPayload, this._shxFont),
           verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
@@ -32772,8 +32754,7 @@ void main() {
      */
     _shxGlyphAdvance(char, textPayload, recordMissing = false) {
       var _a, _b, _c;
-      const charText = char && typeof char === "object" ? String(char.text || "") : char;
-      if (charText === "	") {
+      if (char === "	") {
         const height = Math.max(1e-6, toFiniteNumber(textPayload == null ? void 0 : textPayload.height, 1));
         return height * 1.8;
       }
@@ -32786,7 +32767,7 @@ void main() {
       if (!Number.isFinite(advancePointX) || advancePointX <= 0) {
         this._recordShxZeroAdvance(char, glyph);
         throw new Error(
-          `SHX glyph has no advancePoint: char=${JSON.stringify(charText)} code=${glyph == null ? void 0 : glyph.code} source=${glyph == null ? void 0 : glyph.source} lastPoint=${JSON.stringify((_c = glyph == null ? void 0 : glyph.shape) == null ? void 0 : _c.lastPoint)}`
+          `SHX glyph has no advancePoint: char=${JSON.stringify(char)} code=${glyph == null ? void 0 : glyph.code} source=${glyph == null ? void 0 : glyph.source} lastPoint=${JSON.stringify((_c = glyph == null ? void 0 : glyph.shape) == null ? void 0 : _c.lastPoint)}`
         );
       }
       return advancePointX;
@@ -32798,8 +32779,7 @@ void main() {
         this._textDiagnostics.shxZeroAdvanceCount = 0;
       }
       this._textDiagnostics.shxZeroAdvanceCount += 1;
-      const charCode = char && typeof char === "object" ? char.shxCode : char.codePointAt(0);
-      const key = `${(glyph == null ? void 0 : glyph.source) || "unknown"}:${(_a = glyph == null ? void 0 : glyph.code) != null ? _a : charCode}`;
+      const key = `${(glyph == null ? void 0 : glyph.source) || "unknown"}:${(_a = glyph == null ? void 0 : glyph.code) != null ? _a : char.codePointAt(0)}`;
       if (this._textDiagnostics.shxZeroAdvanceSamples.length < MAX_TEXT_MISSING_GLYPH_SAMPLES && !this._textDiagnostics.shxZeroAdvanceSamples.includes(key)) {
         this._textDiagnostics.shxZeroAdvanceSamples.push(key);
       }
@@ -32831,7 +32811,7 @@ void main() {
     _shxTextLineAdvance(text, textPayload, recordMissing = false) {
       const widthFactor = safeWidthFactor(textPayload == null ? void 0 : textPayload.widthFactor);
       let advance = 0;
-      for (const char of this._shxTextTokens(text)) {
+      for (const char of String(text || "")) {
         if (char === "\n") continue;
         advance += this._shxGlyphAdvance(char, textPayload, recordMissing);
       }
@@ -32851,7 +32831,7 @@ void main() {
       const text = normalizeCadTextForDisplay(textPayload == null ? void 0 : textPayload.text);
       if (!text) return [];
       if ((textPayload == null ? void 0 : textPayload.verticalText) === true) {
-        return this._shxTextTokens(text).filter((char) => char !== "\n");
+        return [...text].filter((char) => char !== "\n");
       }
       return [text];
     }
@@ -32862,7 +32842,7 @@ void main() {
       const text = normalizeCadTextForDisplay(textPayload == null ? void 0 : textPayload.text);
       if (!text) return [];
       if ((textPayload == null ? void 0 : textPayload.verticalText) === true) {
-        return this._shxTextTokens(text).filter((char) => char !== "\n");
+        return [...text].filter((char) => char !== "\n");
       }
       const lines = this._wrapTextToWidth(text, textPayload, (line) => this._shxTextLineAdvance(line, textPayload, false));
       const width = toFiniteNumber(textPayload == null ? void 0 : textPayload.width, 0);
@@ -32978,7 +32958,7 @@ void main() {
         const line = String(lines[i] || "").trimEnd();
         const lineY = -i * lineHeight;
         let cursorX = 0;
-        for (const char of this._shxTextTokens(line)) {
+        for (const char of line) {
           const advance = advanceFn(char, textPayload, true);
           const glyph = this._resolveShxGlyph(char, textPayload, false);
           const glyphYOffset = this._shxGlyphYOffset(glyph, textPayload);
