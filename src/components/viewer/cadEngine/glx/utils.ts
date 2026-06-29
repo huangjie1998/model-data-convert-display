@@ -111,15 +111,43 @@ function decodeCadUnicodeEscapes(text: string): string {
   });
 }
 
+function decodeCadPercentEscapes(text: string): string {
+  let out = '';
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== '%' || text[i + 1] !== '%') {
+      out += text[i];
+      continue;
+    }
+    const marker = text[i + 2];
+    if (marker === '%') {
+      out += '%';
+      i += 2;
+    } else if (marker == null) {
+      out += '%';
+      i += 1;
+    } else if (marker === 'd' || marker === 'D') {
+      out += '°';
+      i += 2;
+    } else if (marker === 'p' || marker === 'P') {
+      out += '±';
+      i += 2;
+    } else if (marker === 'c' || marker === 'C') {
+      out += '⌀';
+      i += 2;
+    } else {
+      out += '%%';
+      i += 1;
+    }
+  }
+  return out;
+}
+
 export function normalizeCadTextContent(value: unknown): string {
   let text = String(value ?? '');
   if (!text) return '';
 
-  text = decodeCadUnicodeEscapes(text);
+  text = decodeCadPercentEscapes(decodeCadUnicodeEscapes(text));
   text = text
-    .replace(/%%d/gi, '\u00B0')
-    .replace(/%%p/gi, '\u00B1')
-    .replace(/%%c/gi, '\u2300')
     .replace(/\\P/gi, '\n')
     .replace(/\\n/g, '\n')
     .replace(/\\~/g, ' ');

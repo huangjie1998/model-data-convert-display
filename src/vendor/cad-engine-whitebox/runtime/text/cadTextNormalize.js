@@ -16,14 +16,42 @@ export function decodeCadUnicodeEscapes(text) {
   });
 }
 
+function decodeCadPercentEscapes(text) {
+  let out = '';
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== '%' || text[i + 1] !== '%') {
+      out += text[i];
+      continue;
+    }
+    const marker = text[i + 2];
+    if (marker === '%') {
+      out += '%';
+      i += 2;
+    } else if (marker == null) {
+      out += '%';
+      i += 1;
+    } else if (marker === 'd' || marker === 'D') {
+      out += '°';
+      i += 2;
+    } else if (marker === 'p' || marker === 'P') {
+      out += '±';
+      i += 2;
+    } else if (marker === 'c' || marker === 'C') {
+      out += '⌀';
+      i += 2;
+    } else {
+      out += '%%';
+      i += 1;
+    }
+  }
+  return out;
+}
+
 export function normalizeCadTextForDisplay(value) {
-  let text = decodeCadUnicodeEscapes(value);
+  let text = decodeCadPercentEscapes(decodeCadUnicodeEscapes(value));
   if (!text) return '';
 
   text = text
-    .replace(/%%d/gi, '\u00B0')
-    .replace(/%%p/gi, '\u00B1')
-    .replace(/%%c/gi, '\u2300')
     .replace(/\u33A1/g, 'm2')
     .replace(/\\P/gi, '\n')
     .replace(/\\n/g, '\n')
