@@ -30344,7 +30344,7 @@ void main() {
       const scale = fontSize / cellHeight;
       const shape = this.parseShape(data, options.verticalText === true);
       const scaled = this.scaleShapeByFactor(shape, scale);
-      if (!scaled.polylines.length) return void 0;
+      if (!scaled.polylines.length && !scaled.lastPoint) return void 0;
       const polylines = scaled.polylines.map(
         (pl) => pl.map((p) => ({ x: p.x, y: p.y }))
       );

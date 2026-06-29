@@ -114,7 +114,7 @@ export class ShxShapeParser {
     // Scale once to target font size
     const scaled = this.scaleShapeByFactor(shape, scale);
 
-    if (!scaled.polylines.length) return undefined;
+    if (!scaled.polylines.length && !scaled.lastPoint) return undefined;
 
     const polylines = scaled.polylines.map(pl =>
       pl.map(p => ({ x: p.x, y: p.y }))
