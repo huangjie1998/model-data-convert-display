@@ -11,6 +11,7 @@
     "test:drawing1-tree-consistency": "py server/scripts/check_drawing1_tree_consistency.py",
     "test:dwg-acceptance": "py server/scripts/check_dwg_acceptance.py",
     "debug:shx-glyph": "node scripts/debug-shx-glyph.mjs",
+    "gen:bigfont-map": "node scripts/gen-bigfont-map.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

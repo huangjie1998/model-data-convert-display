@@ -8,14 +8,11 @@ import {
   CAD_ENGINE_LOAD_READY_TIMEOUT_MS,
   CAD_ENGINE_READY_POLL_INTERVAL_MS,
   CAD_ENGINE_SHX_BIGFONT_MAP_URL,
-  CAD_ENGINE_SHX_BIGFONT_HEIGHT_SCALE,
   CAD_ENGINE_SHX_BIGFONT_SCALE,
   CAD_ENGINE_SHX_BIGFONT_URL,
   CAD_ENGINE_SHX_FONT_URL,
-  CAD_ENGINE_SHX_MTEXT_HEIGHT_SCALE,
   CAD_ENGINE_SHX_REBAR_FONT_URL,
   CAD_ENGINE_SHX_STROKE_TEXT_ENABLED,
-  CAD_ENGINE_SHX_TEXT_HEIGHT_SCALE,
   CAD_ENGINE_TEXT_CURVE_SEGMENTS,
 } from '../runtimeConfig';
 import { createRuntimeDiagnostics, type CadEngineRuntimeDiagnostics, type TextGlyphDiagnostics } from '../runtimeDiagnostics';
@@ -43,8 +40,6 @@ function toRuntimeTextDiagnostics(value: unknown): TextGlyphDiagnostics | null {
     shxBigFontMapPath:
       typeof record.shxBigFontMapPath === 'string' && record.shxBigFontMapPath.trim() ? record.shxBigFontMapPath : null,
     shxBigFontScale: Number.isFinite(Number(record.shxBigFontScale)) ? Number(record.shxBigFontScale) : CAD_ENGINE_SHX_BIGFONT_SCALE,
-    shxTextHeightScale: Number.isFinite(Number(record.shxTextHeightScale)) ? Number(record.shxTextHeightScale) : CAD_ENGINE_SHX_TEXT_HEIGHT_SCALE,
-    shxMTextHeightScale: Number.isFinite(Number(record.shxMTextHeightScale)) ? Number(record.shxMTextHeightScale) : CAD_ENGINE_SHX_MTEXT_HEIGHT_SCALE,
     shxFontLoaded: record.shxFontLoaded === true,
     shxBigFontLoaded: record.shxBigFontLoaded === true,
     shxBigFontMapLoaded: record.shxBigFontMapLoaded === true,
@@ -160,9 +155,6 @@ export function useCadSceneRender(input: UseCadSceneRenderInput): UseCadSceneRen
           engine.scene.shxBigFontPath = shxFontUrls?.bigfont || CAD_ENGINE_SHX_BIGFONT_URL;
           engine.scene.shxBigFontMapPath = CAD_ENGINE_SHX_BIGFONT_MAP_URL;
           engine.scene.shxBigFontScale = CAD_ENGINE_SHX_BIGFONT_SCALE;
-          engine.scene.shxTextHeightScale = CAD_ENGINE_SHX_TEXT_HEIGHT_SCALE;
-          engine.scene.shxMTextHeightScale = CAD_ENGINE_SHX_MTEXT_HEIGHT_SCALE;
-          engine.scene.shxBigFontHeightScale = CAD_ENGINE_SHX_BIGFONT_HEIGHT_SCALE;
           engine.scene.shxRebarFontPath = CAD_ENGINE_SHX_REBAR_FONT_URL;
           engine.scene.docId = input.docId;
           engine.scene.textCurveSegments = CAD_ENGINE_TEXT_CURVE_SEGMENTS;

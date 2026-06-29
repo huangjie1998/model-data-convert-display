@@ -83,6 +83,7 @@ export class ShxShapeParser {
       const above = this.fontData.content.baseUp;
       return above > 0 ? above : 8;
     }
+    // Normal SHX (unifont/shapes) scales by the full cell height.
     return this.fontData.content.height;
   }
 

@@ -31646,6 +31646,8 @@ void main() {
       fontFamily: toStringValue(extras.font_family),
       fontKind: toStringValue(extras.font_kind),
       fontSource: toStringValue(extras.font_source),
+      bigFontKey: toStringValue(extras.bigfont_key),
+      bigFontName: toStringValue(extras.bigfont_name),
       actualWidth: Math.max(0, toFiniteNumber2(extras.actual_width, 0)),
       actualHeight: Math.max(0, toFiniteNumber2(extras.actual_height, 0))
     };
@@ -31777,11 +31779,6 @@ void main() {
     const parsed = toFiniteNumber(value, 0.56);
     if (!Number.isFinite(parsed) || parsed <= 0) return 0.56;
     return Math.max(0.1, Math.min(2, parsed));
-  }
-  function normalizeTextHeightScale(value, fallback) {
-    const parsed = toFiniteNumber(value, fallback);
-    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-    return Math.max(0.5, Math.min(2, parsed));
   }
   function isCjkChar(char) {
     const code = char.codePointAt(0);
@@ -32030,9 +32027,6 @@ void main() {
       this.shxBigFontPath = this._options.shxBigFontPath || "/vendor/fonts/shx/EngineeringChinese.shx";
       this.shxBigFontMapPath = this._options.shxBigFontMapPath || "/vendor/fonts/shx/EngineeringChinese.gb2312-map.json";
       this.shxBigFontScale = normalizeBigFontScale(this._options.shxBigFontScale);
-      this.shxTextHeightScale = normalizeTextHeightScale(this._options.shxTextHeightScale, 1.33);
-      this.shxMTextHeightScale = normalizeTextHeightScale(this._options.shxMTextHeightScale, 1);
-      this.shxBigFontHeightScale = normalizeTextHeightScale(this._options.shxBigFontHeightScale, 1);
       this.shxRebarFontPath = this._options.shxRebarFontPath || "/vendor/fonts/shx/tssdeng.shx";
       this.textCurveSegments = normalizeCurveSegments(this._options.textCurveSegments);
       this.needsUpdateGPUData = false;
@@ -32244,8 +32238,6 @@ void main() {
         shxBigFontPath: this.shxBigFontPath || null,
         shxBigFontMapPath: this.shxBigFontMapPath || null,
         shxBigFontScale: normalizeBigFontScale(this.shxBigFontScale),
-        shxTextHeightScale: normalizeTextHeightScale(this.shxTextHeightScale, 1.33),
-        shxMTextHeightScale: normalizeTextHeightScale(this.shxMTextHeightScale, 1),
         shxFontLoaded: !!this._shxFont,
         shxBigFontLoaded: !!this._shxBigFont,
         shxBigFontMapLoaded: !!this._shxBigFontCodeMap,
@@ -32542,22 +32534,72 @@ void main() {
       };
     }
     _resolveShxGlyph(char, textPayload, recordMissing = true) {
+      var _a, _b;
       if (!char || char === "\n") return null;
       const codePoint = char.codePointAt(0);
       const shxCode = this._shxCodeForChar(char);
-      const fontSize = this._shxGlyphFontSize(textPayload, "font");
       const bigFontSize = this._shxGlyphFontSize(textPayload, "bigfont");
       const entityFontKey = textPayload == null ? void 0 : textPayload.fontKey;
       const entityFont = this._getShxFontByKey(entityFontKey);
-      if (entityFont && Number.isFinite(codePoint) && entityFont.hasChar(codePoint)) {
-        const shape = entityFont.getCharShape(codePoint, fontSize);
-        if (shape) return { shape, source: "entity_font", code: codePoint };
+      if (entityFont) {
+        const isBigFont = ((_b = (_a = entityFont.fontData) == null ? void 0 : _a.header) == null ? void 0 : _b.fontType) === "bigfont";
+        if (isBigFont) {
+          if (Number.isFinite(shxCode) && entityFont.hasChar(shxCode)) {
+            const cadShape = entityFont.getCadCharShape(shxCode, {
+              fontSize: bigFontSize,
+              verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
+            });
+            if (cadShape) {
+              const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+              return { shape, source: "entity_font", code: shxCode };
+            }
+          }
+        } else if (Number.isFinite(codePoint) && entityFont.hasChar(codePoint)) {
+          const cadShape = entityFont.getCadCharShape(codePoint, {
+            fontSize: this._shxGlyphFontSizeForFont(textPayload, entityFont),
+            verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
+          });
+          if (cadShape) {
+            const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+            return { shape, source: "entity_font", code: codePoint };
+          }
+        }
+      }
+      const entityBigFontKey = textPayload == null ? void 0 : textPayload.bigFontKey;
+      const entityBigFont = this._getShxFontByKey(entityBigFontKey);
+      if (entityBigFont && entityBigFont !== entityFont) {
+        if (Number.isFinite(shxCode) && entityBigFont.hasChar(shxCode)) {
+          const cadShape = entityBigFont.getCadCharShape(shxCode, {
+            fontSize: bigFontSize,
+            verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
+          });
+          if (cadShape) {
+            const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+            return { shape, source: "entity_bigfont", code: shxCode };
+          }
+        }
+        if (Number.isFinite(codePoint) && entityBigFont.hasChar(codePoint)) {
+          const cadShape = entityBigFont.getCadCharShape(codePoint, {
+            fontSize: bigFontSize,
+            verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
+          });
+          if (cadShape) {
+            const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+            return { shape, source: "entity_bigfont", code: codePoint };
+          }
+        }
       }
       if (this._shxFont && Number.isFinite(codePoint) && this._shxFont.hasChar(codePoint)) {
-        const shape = this._shxFont.getCharShape(codePoint, fontSize);
-        if (shape) return { shape, source: "font", code: codePoint };
+        const cadShape = this._shxFont.getCadCharShape(codePoint, {
+          fontSize: this._shxGlyphFontSizeForFont(textPayload, this._shxFont),
+          verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
+        });
+        if (cadShape) {
+          const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+          return { shape, source: "font", code: codePoint };
+        }
       }
-      if (this._shxBigFont && Number.isFinite(shxCode) && this._shxBigFont.hasChar(shxCode)) {
+      if (this._shxBigFont && this._shxBigFont !== entityBigFont && Number.isFinite(shxCode) && this._shxBigFont.hasChar(shxCode)) {
         const cadShape = this._shxBigFont.getCadCharShape(shxCode, {
           fontSize: bigFontSize,
           verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
@@ -32567,7 +32609,7 @@ void main() {
           return { shape, source: "bigfont", code: shxCode };
         }
       }
-      if (this._shxBigFont && Number.isFinite(codePoint) && this._shxBigFont.hasChar(codePoint)) {
+      if (this._shxBigFont && this._shxBigFont !== entityBigFont && Number.isFinite(codePoint) && this._shxBigFont.hasChar(codePoint)) {
         const cadShape = this._shxBigFont.getCadCharShape(codePoint, {
           fontSize: bigFontSize,
           verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
@@ -32578,18 +32620,36 @@ void main() {
         }
       }
       if (this._shxRebarFont && Number.isFinite(codePoint) && this._shxRebarFont.hasChar(codePoint)) {
-        const shape = this._shxRebarFont.getCharShape(codePoint, fontSize);
-        if (shape) return { shape, source: "rebar", code: codePoint };
+        const cadShape = this._shxRebarFont.getCadCharShape(codePoint, {
+          fontSize: this._shxGlyphFontSizeForFont(textPayload, this._shxRebarFont),
+          verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
+        });
+        if (cadShape) {
+          const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+          return { shape, source: "rebar", code: codePoint };
+        }
       }
       if (char === "	") return null;
       if (codePoint === 12288) {
         if (this._shxFont && this._shxFont.hasChar(32)) {
-          const shape = this._shxFont.getCharShape(32, fontSize);
-          if (shape) return { shape, source: "font", code: 32 };
+          const cadShape = this._shxFont.getCadCharShape(32, {
+            fontSize: this._shxGlyphFontSizeForFont(textPayload, this._shxFont),
+            verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
+          });
+          if (cadShape) {
+            const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+            return { shape, source: "font", code: 32 };
+          }
         }
         if (entityFont && entityFont.hasChar(32)) {
-          const shape = entityFont.getCharShape(32, fontSize);
-          if (shape) return { shape, source: "entity_font", code: 32 };
+          const cadShape = entityFont.getCadCharShape(32, {
+            fontSize: this._shxGlyphFontSizeForFont(textPayload, entityFont),
+            verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
+          });
+          if (cadShape) {
+            const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+            return { shape, source: "entity_font", code: 32 };
+          }
         }
       }
       if (recordMissing) {
@@ -32600,8 +32660,12 @@ void main() {
         }
       }
       if (this._shxFont && char !== "?") {
-        const fallbackShape = this._shxFont.getCharShape("?".codePointAt(0), this._shxGlyphFontSize(textPayload, "font"));
-        if (fallbackShape) {
+        const fallbackCadShape = this._shxFont.getCadCharShape("?".codePointAt(0), {
+          fontSize: this._shxGlyphFontSizeForFont(textPayload, this._shxFont),
+          verticalText: (textPayload == null ? void 0 : textPayload.verticalText) === true
+        });
+        if (fallbackCadShape) {
+          const fallbackShape = { polylines: fallbackCadShape.polylines, bbox: fallbackCadShape.bbox, lastPoint: fallbackCadShape.lastPoint };
           if (recordMissing) this._textDiagnostics.generatedQuestionMarkCount += 1;
           return { shape: fallbackShape, source: "fallback", code: "?".codePointAt(0) };
         }
@@ -32615,19 +32679,24 @@ void main() {
     _shxGlyphFontSize(textPayload, glyphSource) {
       return (textPayload == null ? void 0 : textPayload.isMText) === true ? this._shxGlyphFontSize_mtext(textPayload, glyphSource) : this._shxGlyphFontSize_text(textPayload, glyphSource);
     }
-    _shxGlyphFontSize_text(textPayload, glyphSource) {
-      const height = Math.max(1e-6, toFiniteNumber(textPayload == null ? void 0 : textPayload.height, 1));
-      if (glyphSource === "bigfont") {
-        return height * normalizeTextHeightScale(this.shxBigFontHeightScale, 1);
+    _shxGlyphFontSizeForFont(textPayload, font) {
+      var _a, _b, _c;
+      const height = this._shxGlyphFontSize(textPayload, "font");
+      if ((textPayload == null ? void 0 : textPayload.isMText) === true) return height;
+      const content = (_a = font == null ? void 0 : font.fontData) == null ? void 0 : _a.content;
+      if (((_c = (_b = font == null ? void 0 : font.fontData) == null ? void 0 : _b.header) == null ? void 0 : _c.fontType) === "bigfont") return height;
+      const cellH = toFiniteNumber(content == null ? void 0 : content.height, 0);
+      const baseUp = toFiniteNumber(content == null ? void 0 : content.baseUp, 0);
+      if (cellH > 0 && baseUp > 0) {
+        return height * (cellH / baseUp);
       }
-      return height * normalizeTextHeightScale(this.shxTextHeightScale, 1.33);
+      return height;
+    }
+    _shxGlyphFontSize_text(textPayload, glyphSource) {
+      return Math.max(1e-6, toFiniteNumber(textPayload == null ? void 0 : textPayload.height, 1));
     }
     _shxGlyphFontSize_mtext(textPayload, glyphSource) {
-      const height = Math.max(1e-6, toFiniteNumber(textPayload == null ? void 0 : textPayload.height, 1));
-      if (glyphSource === "bigfont") {
-        return height * normalizeTextHeightScale(this.shxBigFontHeightScale, 1);
-      }
-      return height * normalizeTextHeightScale(this.shxMTextHeightScale, 1);
+      return Math.max(1e-6, toFiniteNumber(textPayload == null ? void 0 : textPayload.height, 1));
     }
     /**
      * 字符前进点 (advancePoint) 解析。
@@ -32924,6 +32993,12 @@ void main() {
           this.needsUpdateGPUData = true;
         });
       }
+      const bigFontKey = textPayload == null ? void 0 : textPayload.bigFontKey;
+      if (bigFontKey && !this._shxFontByKey.has(bigFontKey)) {
+        this._loadShxFontByKey(bigFontKey).then(() => {
+          this.needsUpdateGPUData = true;
+        });
+      }
       const lines = this._shxTextLines_text(textPayload);
       const geometry = this._buildShxStrokeLineGeometry(lines, textPayload, (c, p, r) => this._shxGlyphAdvance(c, p, r));
       if (!geometry) return null;
@@ -32940,6 +33015,12 @@ void main() {
       const fontKey = textPayload == null ? void 0 : textPayload.fontKey;
       if (fontKey && !this._shxFontByKey.has(fontKey)) {
         this._loadShxFontByKey(fontKey).then(() => {
+          this.needsUpdateGPUData = true;
+        });
+      }
+      const bigFontKey = textPayload == null ? void 0 : textPayload.bigFontKey;
+      if (bigFontKey && !this._shxFontByKey.has(bigFontKey)) {
+        this._loadShxFontByKey(bigFontKey).then(() => {
           this.needsUpdateGPUData = true;
         });
       }
@@ -33141,8 +33222,26 @@ void main() {
       this.camera.updateProjectionMatrix();
     }
     async _applyParsedBundle(glxJson, meshArrayBuffer) {
+      var _a;
       this._clearSceneGraph();
       const parsed = parseGlxBundle(glxJson, meshArrayBuffer);
+      const fontKeysToLoad = /* @__PURE__ */ new Set();
+      for (let li = 0; li < parsed.layers.length; li += 1) {
+        const items = ((_a = parsed.layers[li]) == null ? void 0 : _a.items) || [];
+        for (let ji = 0; ji < items.length; ji += 1) {
+          const it = items[ji];
+          if ((it == null ? void 0 : it.kind) !== "text" || !it.payload) continue;
+          const fk = String(it.payload.fontKey || "").trim();
+          const bfk = String(it.payload.bigFontKey || "").trim();
+          if (fk) fontKeysToLoad.add(fk);
+          if (bfk) fontKeysToLoad.add(bfk);
+        }
+      }
+      if (fontKeysToLoad.size > 0) {
+        await Promise.all(
+          Array.from(fontKeysToLoad).map((k) => this._loadShxFontByKey(k).catch(() => void 0))
+        );
+      }
       for (let i = 0; i < parsed.layers.length; i += 1) {
         const layerJson = parsed.layers[i];
         const layerState = createLayerState(layerJson);

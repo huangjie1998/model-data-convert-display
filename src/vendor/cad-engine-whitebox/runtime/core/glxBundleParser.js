@@ -199,6 +199,8 @@ function parseEntityText(entity) {
     fontFamily: toStringValue(extras.font_family),
     fontKind: toStringValue(extras.font_kind),
     fontSource: toStringValue(extras.font_source),
+    bigFontKey: toStringValue(extras.bigfont_key),
+    bigFontName: toStringValue(extras.bigfont_name),
     actualWidth: Math.max(0, toFiniteNumber(extras.actual_width, 0)),
     actualHeight: Math.max(0, toFiniteNumber(extras.actual_height, 0)),
   };

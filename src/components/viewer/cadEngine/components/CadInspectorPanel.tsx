@@ -121,10 +121,6 @@ export function CadInspectorPanel(props: CadInspectorPanelProps) {
                     {runtimeDiagnostics.textGlyphs.shxBigFontScale.toFixed(2)}
                   </div>
                   <div>
-                    SHX高度缩放: TEXT {runtimeDiagnostics.textGlyphs.shxTextHeightScale.toFixed(2)} / MTEXT{' '}
-                    {runtimeDiagnostics.textGlyphs.shxMTextHeightScale.toFixed(2)}
-                  </div>
-                  <div>
                     SHX字体URL: {runtimeDiagnostics.textGlyphs.shxFontPath || '--'} / {runtimeDiagnostics.textGlyphs.shxBigFontPath || '--'}
                   </div>
                   {runtimeDiagnostics.textGlyphs.shxLoadError && <div>SHX加载错误: {runtimeDiagnostics.textGlyphs.shxLoadError}</div>}

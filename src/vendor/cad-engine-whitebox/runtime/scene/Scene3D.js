@@ -10,7 +10,6 @@ import {
   normalizeCadTextForDisplay,
   normalizeCurveSegments,
   normalizeObliqueToRadians,
-  normalizeTextHeightScale,
   safeWidthFactor,
 } from '../text/cadTextNormalize.js';
 import { layoutCadText } from '../text/textLayout.js';
@@ -126,9 +125,6 @@ export class Scene3D {
     this.shxBigFontPath = this._options.shxBigFontPath || '/vendor/fonts/shx/EngineeringChinese.shx';
     this.shxBigFontMapPath = this._options.shxBigFontMapPath || '/vendor/fonts/shx/EngineeringChinese.gb2312-map.json';
     this.shxBigFontScale = normalizeBigFontScale(this._options.shxBigFontScale);
-    this.shxTextHeightScale = normalizeTextHeightScale(this._options.shxTextHeightScale, 1.33);
-    this.shxMTextHeightScale = normalizeTextHeightScale(this._options.shxMTextHeightScale, 1.0);
-    this.shxBigFontHeightScale = normalizeTextHeightScale(this._options.shxBigFontHeightScale, 1.0);
     this.shxRebarFontPath = this._options.shxRebarFontPath || '/vendor/fonts/shx/tssdeng.shx';
     this.textCurveSegments = normalizeCurveSegments(this._options.textCurveSegments);
     this.needsUpdateGPUData = false;
@@ -374,8 +370,6 @@ export class Scene3D {
       shxBigFontPath: this.shxBigFontPath || null,
       shxBigFontMapPath: this.shxBigFontMapPath || null,
       shxBigFontScale: normalizeBigFontScale(this.shxBigFontScale),
-      shxTextHeightScale: normalizeTextHeightScale(this.shxTextHeightScale, 1.33),
-      shxMTextHeightScale: normalizeTextHeightScale(this.shxMTextHeightScale, 1.0),
       shxFontLoaded: !!this._shxFont,
       shxBigFontLoaded: !!this._shxBigFont,
       shxBigFontMapLoaded: !!this._shxBigFontCodeMap,
@@ -604,7 +598,7 @@ export class Scene3D {
       } else if (verticalMode.includes('bottom') || verticalNumber === 1) {
         anchorY = 0;
       } else {
-        // baseline：保持 0，cap-height 偏差由 _shxGlyphFontSize_text 的 heightScale 处理
+        // baseline：保持 0
         anchorY = 0;
       }
     }
@@ -742,7 +736,7 @@ export class Scene3D {
       const font = new ShxFont(buf);
       this._shxFontByKey.set(fontKey, font);
     } catch {
-      this._shxFontByKey.delete(fontKey); // 加载失败，允许重试
+      this._shxFontByKey.delete(fontKey); // 加载失败，移除标记以允许下次重试
     }
   }
 
@@ -801,25 +795,80 @@ export class Scene3D {
     if (!char || char === '\n') return null;
     const codePoint = char.codePointAt(0);
     const shxCode = this._shxCodeForChar(char);
-    const fontSize = this._shxGlyphFontSize(textPayload, 'font');
     const bigFontSize = this._shxGlyphFontSize(textPayload, 'bigfont');
 
-    // 1. 优先使用文字实体指定的 SHX 字体（如 SIMPLEX.SHX）
+    // 1. 优先使用文字实体指定的 SHX 字体（如 SIMPLEX.SHX / ACCI-KT.SHX）。
     const entityFontKey = textPayload?.fontKey;
     const entityFont = this._getShxFontByKey(entityFontKey);
-    if (entityFont && Number.isFinite(codePoint) && entityFont.hasChar(codePoint)) {
-      const shape = entityFont.getCharShape(codePoint, fontSize);
-      if (shape) return { shape, source: 'entity_font', code: codePoint };
+    if (entityFont) {
+      const isBigFont = entityFont.fontData?.header?.fontType === 'bigfont';
+      if (isBigFont) {
+        // BigFont entityFont：用 GB 翻译码查（半角 ASCII 时 _shxCodeForChar 退回 codePoint）
+        if (Number.isFinite(shxCode) && entityFont.hasChar(shxCode)) {
+          const cadShape = entityFont.getCadCharShape(shxCode, {
+            fontSize: bigFontSize,
+            verticalText: textPayload?.verticalText === true,
+          });
+          if (cadShape) {
+            const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+            return { shape, source: 'entity_font', code: shxCode };
+          }
+        }
+        // BigFont 单字节 ASCII 区通常没字形（如 ACCI-KT 0/96），让流程继续往下走主字体兜底
+      } else if (Number.isFinite(codePoint) && entityFont.hasChar(codePoint)) {
+        const cadShape = entityFont.getCadCharShape(codePoint, {
+          fontSize: this._shxGlyphFontSizeForFont(textPayload, entityFont),
+          verticalText: textPayload?.verticalText === true,
+        });
+        if (cadShape) {
+          const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+          return { shape, source: 'entity_font', code: codePoint };
+        }
+      }
+    }
+
+    // 1b. 文字实体专属的大字体（text_style.bigfont_name，如 ACCI-KT.SHX / gbcbig.shx）。
+    // 跨实体共享一份 _shxBigFont 会让 "样式 1=wlc-e1+ACCI-KT" 的实体被
+    // 全局 bigfont（来自最常用样式）的字形覆盖，必须先查实体自己的大字体。
+    const entityBigFontKey = textPayload?.bigFontKey;
+    const entityBigFont = this._getShxFontByKey(entityBigFontKey);
+    if (entityBigFont && entityBigFont !== entityFont) {
+      if (Number.isFinite(shxCode) && entityBigFont.hasChar(shxCode)) {
+        const cadShape = entityBigFont.getCadCharShape(shxCode, {
+          fontSize: bigFontSize,
+          verticalText: textPayload?.verticalText === true,
+        });
+        if (cadShape) {
+          const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+          return { shape, source: 'entity_bigfont', code: shxCode };
+        }
+      }
+      if (Number.isFinite(codePoint) && entityBigFont.hasChar(codePoint)) {
+        const cadShape = entityBigFont.getCadCharShape(codePoint, {
+          fontSize: bigFontSize,
+          verticalText: textPayload?.verticalText === true,
+        });
+        if (cadShape) {
+          const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+          return { shape, source: 'entity_bigfont', code: codePoint };
+        }
+      }
     }
 
     // 2. 主字体（如 txt.shx）
     if (this._shxFont && Number.isFinite(codePoint) && this._shxFont.hasChar(codePoint)) {
-      const shape = this._shxFont.getCharShape(codePoint, fontSize);
-      if (shape) return { shape, source: 'font', code: codePoint };
+      const cadShape = this._shxFont.getCadCharShape(codePoint, {
+        fontSize: this._shxGlyphFontSizeForFont(textPayload, this._shxFont),
+        verticalText: textPayload?.verticalText === true,
+      });
+      if (cadShape) {
+        const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+        return { shape, source: 'font', code: codePoint };
+      }
     }
 
-    // 3. 大字体（如 gbcbig.shx）— 使用 getCadCharShape 内联执行，保留基线
-    if (this._shxBigFont && Number.isFinite(shxCode) && this._shxBigFont.hasChar(shxCode)) {
+    // 3. 全局大字体（如 gbcbig.shx）— 兜底使用，仅当实体没指定 bigfont 或自家 bigfont 也没字形时。
+    if (this._shxBigFont && this._shxBigFont !== entityBigFont && Number.isFinite(shxCode) && this._shxBigFont.hasChar(shxCode)) {
       const cadShape = this._shxBigFont.getCadCharShape(shxCode, {
         fontSize: bigFontSize,
         verticalText: textPayload?.verticalText === true,
@@ -830,7 +879,7 @@ export class Scene3D {
       }
     }
 
-    if (this._shxBigFont && Number.isFinite(codePoint) && this._shxBigFont.hasChar(codePoint)) {
+    if (this._shxBigFont && this._shxBigFont !== entityBigFont && Number.isFinite(codePoint) && this._shxBigFont.hasChar(codePoint)) {
       const cadShape = this._shxBigFont.getCadCharShape(codePoint, {
         fontSize: bigFontSize,
         verticalText: textPayload?.verticalText === true,
@@ -843,8 +892,14 @@ export class Scene3D {
 
     // 4. 钢筋符号字体回退（tssdeng.shx）
     if (this._shxRebarFont && Number.isFinite(codePoint) && this._shxRebarFont.hasChar(codePoint)) {
-      const shape = this._shxRebarFont.getCharShape(codePoint, fontSize);
-      if (shape) return { shape, source: 'rebar', code: codePoint };
+      const cadShape = this._shxRebarFont.getCadCharShape(codePoint, {
+        fontSize: this._shxGlyphFontSizeForFont(textPayload, this._shxRebarFont),
+        verticalText: textPayload?.verticalText === true,
+      });
+      if (cadShape) {
+        const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+        return { shape, source: 'rebar', code: codePoint };
+      }
     }
 
     if (char === '\t') return null;
@@ -854,12 +909,24 @@ export class Scene3D {
     // 不走 missing-glyph 通道，避免被替换成 '?'。
     if (codePoint === 0x3000) {
       if (this._shxFont && this._shxFont.hasChar(0x20)) {
-        const shape = this._shxFont.getCharShape(0x20, fontSize);
-        if (shape) return { shape, source: 'font', code: 0x20 };
+        const cadShape = this._shxFont.getCadCharShape(0x20, {
+          fontSize: this._shxGlyphFontSizeForFont(textPayload, this._shxFont),
+          verticalText: textPayload?.verticalText === true,
+        });
+        if (cadShape) {
+          const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+          return { shape, source: 'font', code: 0x20 };
+        }
       }
       if (entityFont && entityFont.hasChar(0x20)) {
-        const shape = entityFont.getCharShape(0x20, fontSize);
-        if (shape) return { shape, source: 'entity_font', code: 0x20 };
+        const cadShape = entityFont.getCadCharShape(0x20, {
+          fontSize: this._shxGlyphFontSizeForFont(textPayload, entityFont),
+          verticalText: textPayload?.verticalText === true,
+        });
+        if (cadShape) {
+          const shape = { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+          return { shape, source: 'entity_font', code: 0x20 };
+        }
       }
     }
 
@@ -872,8 +939,12 @@ export class Scene3D {
     }
 
     if (this._shxFont && char !== '?') {
-      const fallbackShape = this._shxFont.getCharShape('?'.codePointAt(0), this._shxGlyphFontSize(textPayload, 'font'));
-      if (fallbackShape) {
+      const fallbackCadShape = this._shxFont.getCadCharShape('?'.codePointAt(0), {
+        fontSize: this._shxGlyphFontSizeForFont(textPayload, this._shxFont),
+        verticalText: textPayload?.verticalText === true,
+      });
+      if (fallbackCadShape) {
+        const fallbackShape = { polylines: fallbackCadShape.polylines, bbox: fallbackCadShape.bbox, lastPoint: fallbackCadShape.lastPoint };
         if (recordMissing) this._textDiagnostics.generatedQuestionMarkCount += 1;
         return { shape: fallbackShape, source: 'fallback', code: '?'.codePointAt(0) };
       }
@@ -891,20 +962,25 @@ export class Scene3D {
       : this._shxGlyphFontSize_text(textPayload, glyphSource);
   }
 
-  _shxGlyphFontSize_text(textPayload, glyphSource) {
-    const height = Math.max(1e-6, toFiniteNumber(textPayload?.height, 1));
-    if (glyphSource === 'bigfont') {
-      return height * normalizeTextHeightScale(this.shxBigFontHeightScale, 1.0);
+  _shxGlyphFontSizeForFont(textPayload, font) {
+    const height = this._shxGlyphFontSize(textPayload, 'font');
+    if (textPayload?.isMText === true) return height;
+    const content = font?.fontData?.content;
+    if (font?.fontData?.header?.fontType === 'bigfont') return height;
+    const cellH = toFiniteNumber(content?.height, 0);
+    const baseUp = toFiniteNumber(content?.baseUp, 0);
+    if (cellH > 0 && baseUp > 0) {
+      return height * (cellH / baseUp);
     }
-    return height * normalizeTextHeightScale(this.shxTextHeightScale, 1.33);
+    return height;
+  }
+
+  _shxGlyphFontSize_text(textPayload, glyphSource) {
+    return Math.max(1e-6, toFiniteNumber(textPayload?.height, 1));
   }
 
   _shxGlyphFontSize_mtext(textPayload, glyphSource) {
-    const height = Math.max(1e-6, toFiniteNumber(textPayload?.height, 1));
-    if (glyphSource === 'bigfont') {
-      return height * normalizeTextHeightScale(this.shxBigFontHeightScale, 1.0);
-    }
-    return height * normalizeTextHeightScale(this.shxMTextHeightScale, 1.0);
+    return Math.max(1e-6, toFiniteNumber(textPayload?.height, 1));
   }
 
   /**
@@ -1236,6 +1312,10 @@ export class Scene3D {
     if (fontKey && !this._shxFontByKey.has(fontKey)) {
       this._loadShxFontByKey(fontKey).then(() => { this.needsUpdateGPUData = true; });
     }
+    const bigFontKey = textPayload?.bigFontKey;
+    if (bigFontKey && !this._shxFontByKey.has(bigFontKey)) {
+      this._loadShxFontByKey(bigFontKey).then(() => { this.needsUpdateGPUData = true; });
+    }
     const lines = this._shxTextLines_text(textPayload);
     const geometry = this._buildShxStrokeLineGeometry(lines, textPayload, (c, p, r) => this._shxGlyphAdvance(c, p, r));
     if (!geometry) return null;
@@ -1254,6 +1334,10 @@ export class Scene3D {
     const fontKey = textPayload?.fontKey;
     if (fontKey && !this._shxFontByKey.has(fontKey)) {
       this._loadShxFontByKey(fontKey).then(() => { this.needsUpdateGPUData = true; });
+    }
+    const bigFontKey = textPayload?.bigFontKey;
+    if (bigFontKey && !this._shxFontByKey.has(bigFontKey)) {
+      this._loadShxFontByKey(bigFontKey).then(() => { this.needsUpdateGPUData = true; });
     }
     const lines = this._shxTextLines_mtext(textPayload);
     const geometry = this._buildShxStrokeLineGeometry(lines, textPayload, (c, p, r) => this._shxGlyphAdvance(c, p, r));
@@ -1479,6 +1563,30 @@ export class Scene3D {
     this._clearSceneGraph();
 
     const parsed = parseGlxBundle(glxJson, meshArrayBuffer);
+
+    // 在构建几何之前，先把所有实体引用到的 SHX font_key / bigfont_key 加载齐全。
+    // _buildShxStrokeTextGeometry_* 是同步的：第一次构建后 _resolveShxGlyph 会
+    // 把字形烘进 THREE.LineSegments；后续 _loadShxFontByKey 完成只把
+    // needsUpdateGPUData=true，这只触发 render()，不会重建几何，也不会改用
+    // entity 自己的 bigfont（如 ACCI-KT.SHX/wlc-e1.shx）。所以必须在构建前
+    // 等所有 per-entity SHX 加载完。
+    const fontKeysToLoad = new Set();
+    for (let li = 0; li < parsed.layers.length; li += 1) {
+      const items = parsed.layers[li]?.items || [];
+      for (let ji = 0; ji < items.length; ji += 1) {
+        const it = items[ji];
+        if (it?.kind !== 'text' || !it.payload) continue;
+        const fk = String(it.payload.fontKey || '').trim();
+        const bfk = String(it.payload.bigFontKey || '').trim();
+        if (fk) fontKeysToLoad.add(fk);
+        if (bfk) fontKeysToLoad.add(bfk);
+      }
+    }
+    if (fontKeysToLoad.size > 0) {
+      await Promise.all(
+        Array.from(fontKeysToLoad).map((k) => this._loadShxFontByKey(k).catch(() => undefined))
+      );
+    }
 
     for (let i = 0; i < parsed.layers.length; i += 1) {
       const layerJson = parsed.layers[i];

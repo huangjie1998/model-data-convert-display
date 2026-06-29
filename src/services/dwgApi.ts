@@ -210,6 +210,8 @@ type DwgPrimitiveCore =
       font_family?: string | null;
       font_kind?: string | null;
       font_source?: string | null;
+      bigfont_key?: string | null;
+      bigfont_name?: string | null;
     }
   | { kind: 'point'; position: DwgPrimitivePoint; display_size?: number }
   | {
@@ -279,6 +281,8 @@ export type DwgGeometry = Record<string, unknown> & {
   font_family?: string | null;
   font_kind?: string | null;
   font_source?: string | null;
+  bigfont_key?: string | null;
+  bigfont_name?: string | null;
 };
 
 export interface DwgEntityLite {

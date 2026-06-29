@@ -15,8 +15,6 @@ export interface TextGlyphDiagnostics {
   shxBigFontPath: string | null;
   shxBigFontMapPath: string | null;
   shxBigFontScale: number;
-  shxTextHeightScale: number;
-  shxMTextHeightScale: number;
   shxFontLoaded: boolean;
   shxBigFontLoaded: boolean;
   shxBigFontMapLoaded: boolean;

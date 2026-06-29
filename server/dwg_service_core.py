@@ -550,6 +550,12 @@ class DwgServiceCore:
         font_key_seed = style_name or font_name or font_family or "default"
         font_key = _sanitize_font_key(font_key_seed)
 
+        # Big font (gbcbig.shx / ACCI-KT.shx 等)：text_style 里独立字段，与主字体并列。
+        # 不传给前端的话，AutoCAD 里 "样式 1 = wlc-e1 + ACCI-KT" 的双字体对会丢一半，
+        # 中文字符只能依赖全局降级，渲染必错位。
+        bigfont_name = str((style_rec or {}).get("bigfont_name") or "").strip() or None
+        bigfont_key = _sanitize_font_key(bigfont_name) if bigfont_name else None
+
         geom_out = dict(geom)
         geom_out["font_key"] = font_key
         geom_out["font_style_name"] = style_name or None
@@ -559,6 +565,8 @@ class DwgServiceCore:
         geom_out["font_source"] = font_source
         geom_out["shape_file"] = bool((style_rec or {}).get("shape_file", False))
         geom_out["text_vertical"] = bool((style_rec or {}).get("vertical", False))
+        geom_out["bigfont_name"] = bigfont_name
+        geom_out["bigfont_key"] = bigfont_key
 
         out = dict(ent)
         out["geom"] = geom_out
@@ -1822,39 +1830,87 @@ class DwgServiceCore:
         font_files: Dict[str, str] = {}
         shx_fallback_hits = 0
 
+        def _ingest_font_meta(meta: Dict[str, object]) -> None:
+            """从一份 font 元数据（geom 或 text primitive）里抽出 font_key 并累计使用计数。"""
+            font_key_raw = (
+                meta.get("font_key")
+                or meta.get("font_style_name")
+                or meta.get("font_name")
+                or meta.get("font_family")
+            )
+            if not font_key_raw:
+                return
+            font_key = _sanitize_font_key(font_key_raw)
+            style_name = str(meta.get("font_style_name") or meta.get("style_name") or "").strip() or None
+            font_name = str(meta.get("font_name") or style_name or "").strip() or None
+            font_family = str(meta.get("font_family") or _font_family_from_name(font_name or style_name or "")).strip() or None
+            font_kind = str(meta.get("font_kind") or _detect_font_kind(font_name or "")).strip().lower() or "unknown"
+            font_source = str(meta.get("font_source") or ("text_style_table" if style_name else "fallback")).strip() or "fallback"
+
+            record = aggregated.get(font_key)
+            if record is None:
+                record = {
+                    "key": font_key,
+                    "style_name": style_name,
+                    "name": font_name,
+                    "family": font_family,
+                    "kind": font_kind,
+                    "source": font_source,
+                    "usage_count": 0,
+                    "is_bigfont": False,
+                }
+                aggregated[font_key] = record
+            else:
+                # 已有记录但元数据更具体（例如 DIMENSION 嵌套 text primitive 给出真实 font_name）则补全
+                if not record.get("name") and font_name:
+                    record["name"] = font_name
+                if not record.get("style_name") and style_name:
+                    record["style_name"] = style_name
+                if not record.get("family") and font_family:
+                    record["family"] = font_family
+                if (record.get("kind") in (None, "", "unknown")) and font_kind and font_kind != "unknown":
+                    record["kind"] = font_kind
+            record["usage_count"] = int(record.get("usage_count", 0)) + 1
+
+            # text_style 的 bigfont（gbcbig.shx / ACCI-KT.shx 等）：作为独立字体条目登记，
+            # 这样前端可以单独 GET /fonts/<bigfont_key>/file 获取大字体文件。
+            bigfont_name = str(meta.get("bigfont_name") or "").strip() or None
+            bigfont_key_raw = meta.get("bigfont_key") or bigfont_name
+            if bigfont_name and bigfont_key_raw:
+                bf_key = _sanitize_font_key(bigfont_key_raw)
+                bf_record = aggregated.get(bf_key)
+                if bf_record is None:
+                    bf_record = {
+                        "key": bf_key,
+                        "style_name": None,
+                        "name": bigfont_name,
+                        "family": _font_family_from_name(bigfont_name) or None,
+                        "kind": "shx",
+                        "source": "text_style_bigfont",
+                        "usage_count": 0,
+                        "is_bigfont": True,
+                    }
+                    aggregated[bf_key] = bf_record
+                bf_record["usage_count"] = int(bf_record.get("usage_count", 0)) + 1
+
         for entities in session.entities_by_space.values():
             for ent in entities:
-                if not _is_text_entity_type(ent.get("type")):
-                    continue
-                geom = ent.get("geom") if isinstance(ent.get("geom"), dict) else {}
+                ent_type = str(ent.get("type", "")).upper()
+                geom = ent.get("geom") if isinstance(ent.get("geom"), dict) else None
                 if not isinstance(geom, dict):
                     continue
 
-                font_key = _sanitize_font_key(
-                    geom.get("font_key")
-                    or geom.get("font_style_name")
-                    or geom.get("font_name")
-                    or geom.get("font_family")
-                )
-                style_name = str(geom.get("font_style_name") or geom.get("style_name") or "").strip() or None
-                font_name = str(geom.get("font_name") or style_name or "").strip() or None
-                font_family = str(geom.get("font_family") or _font_family_from_name(font_name or style_name or "")).strip() or None
-                font_kind = str(geom.get("font_kind") or _detect_font_kind(font_name or "")).strip().lower() or "unknown"
-                font_source = str(geom.get("font_source") or ("text_style_table" if style_name else "fallback")).strip() or "fallback"
+                # 主体 TEXT/MTEXT：直接从 geom 收集。
+                if _is_text_entity_type(ent_type):
+                    _ingest_font_meta(geom)
 
-                record = aggregated.get(font_key)
-                if record is None:
-                    record = {
-                        "key": font_key,
-                        "style_name": style_name,
-                        "name": font_name,
-                        "family": font_family,
-                        "kind": font_kind,
-                        "source": font_source,
-                        "usage_count": 0,
-                    }
-                    aggregated[font_key] = record
-                record["usage_count"] = int(record.get("usage_count", 0)) + 1
+                # DIMENSION 等复合实体：内嵌的 text primitive 才是真正承载字体的载体，
+                # 不收集会导致前端拿到 font_key 后请求 /fonts/<key>/file 拿到 404。
+                primitives = geom.get("primitives")
+                if isinstance(primitives, list):
+                    for prim in primitives:
+                        if isinstance(prim, dict) and str(prim.get("kind", "")).lower() == "text":
+                            _ingest_font_meta(prim)
 
         fonts: List[Dict[str, object]] = []
         for key, record in aggregated.items():
@@ -1930,6 +1986,7 @@ class DwgServiceCore:
                     "reason": reason,
                     "fallback_shx_hit": fallback_shx_hit,
                     "fallback_shx_file_name": self.shx_fallback_file.name if fallback_shx_hit else None,
+                    "is_bigfont": bool(record.get("is_bigfont", False)),
                 }
             )
 

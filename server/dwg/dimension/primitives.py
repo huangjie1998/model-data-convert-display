@@ -225,6 +225,8 @@ def _append_dimension_text(out: List[Primitive], ent: Entity, geom: Geom, contex
         "font_family": geom.get("font_family"),
         "font_kind": geom.get("font_kind"),
         "font_source": geom.get("font_source"),
+        "bigfont_key": geom.get("bigfont_key"),
+        "bigfont_name": geom.get("bigfont_name"),
     }
     if text_color:
         text_obj["color"] = text_color

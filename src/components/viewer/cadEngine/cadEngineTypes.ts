@@ -82,11 +82,8 @@ export interface CadEngineScene {
   shxBigFontPath?: string;
   shxBigFontMapPath?: string;
   shxBigFontScale?: number;
-  shxBigFontHeightScale?: number;
   shxRebarFontPath?: string;
   docId?: string | null;
-  shxTextHeightScale?: number;
-  shxMTextHeightScale?: number;
   needsUpdateGPUData?: boolean;
   textCurveSegments?: number;
   traverse?: (visitor: (node: CadEngineSceneNode) => void) => void;

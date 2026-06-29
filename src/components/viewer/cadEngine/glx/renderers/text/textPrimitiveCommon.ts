@@ -117,6 +117,8 @@ export function renderClassifiedTextPrimitive(
       font_family: String(record.font_family ?? ''),
       font_kind: String(record.font_kind ?? ''),
       font_source: String(record.font_source ?? ''),
+      bigfont_key: String(record.bigfont_key ?? ''),
+      bigfont_name: String(record.bigfont_name ?? ''),
       actual_width: toNumber(parseFiniteNumber(record.actual_width), 0),
       actual_height: toNumber(parseFiniteNumber(record.actual_height), 0),
     },

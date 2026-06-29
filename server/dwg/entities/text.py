@@ -47,6 +47,8 @@ def build_text_primitives(ent: Entity, geom: Geom, context: PrimitiveBuildContex
         "font_family": geom.get("font_family"),
         "font_kind": geom.get("font_kind"),
         "font_source": geom.get("font_source"),
+        "bigfont_key": geom.get("bigfont_key"),
+        "bigfont_name": geom.get("bigfont_name"),
         "subtype": subtype,
         "text_mask": bool(geom.get("text_mask", False)),
         "text_mask_padding": finite_float(geom.get("text_mask_padding"), 0.25),
