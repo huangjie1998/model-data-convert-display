@@ -39,21 +39,6 @@ function decodeCadPercentEscapes(text) {
     } else if (marker === 'c' || marker === 'C') {
       out += '⌀';
       i += 2;
-    } else if (/\d/.test(marker || '')) {
-      let digits = marker;
-      let j = i + 3;
-      while (j < text.length && digits.length < 3 && /\d/.test(text[j])) {
-        digits += text[j];
-        j += 1;
-      }
-      const code = Number.parseInt(digits, 10);
-      if (Number.isFinite(code) && code > 0) {
-        out += String.fromCharCode(code);
-        i = j - 1;
-      } else {
-        out += '%%';
-        i += 1;
-      }
     } else {
       out += '%%';
       i += 1;
