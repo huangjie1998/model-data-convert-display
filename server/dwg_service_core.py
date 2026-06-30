@@ -547,7 +547,7 @@ class DwgServiceCore:
             if resolved and _detect_font_kind(str(resolved)) == "shx":
                 font_kind = "shx"
         font_source = "text_style_table" if style_rec else ("entity_style_name" if style_name else "fallback")
-        font_key_seed = style_name or font_name or font_family or "default"
+        font_key_seed = font_name or style_name or font_family or "default"
         font_key = _sanitize_font_key(font_key_seed)
 
         # Big font (gbcbig.shx / ACCI-KT.shx 等)：text_style 里独立字段，与主字体并列。
@@ -1179,7 +1179,7 @@ class DwgServiceCore:
             is_shx = shape_file or font_kind == "shx" or _detect_font_kind(font_name) == "shx"
             # Also check if the resolved font file is SHX (handles cases where
             # font_name has no extension, e.g. "SIMPLEX" → resolves to "simplex.shx")
-            key = _sanitize_font_key(style_name or font_name)
+            key = _sanitize_font_key(font_name or style_name)
             if not is_shx and key in session.font_files:
                 is_shx = _detect_font_kind(session.font_files[key]) == "shx"
             if not is_shx:

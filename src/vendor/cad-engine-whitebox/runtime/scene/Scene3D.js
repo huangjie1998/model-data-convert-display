@@ -11,6 +11,7 @@ import {
   normalizeCurveSegments,
   normalizeObliqueToRadians,
   safeWidthFactor,
+  isCjkText,
 } from '../text/cadTextNormalize.js';
 import { layoutCadText } from '../text/textLayout.js';
 import { wrapSingleLineToWidth } from '../text/textWrap.js';
@@ -386,6 +387,8 @@ export class Scene3D {
       glyphMissingSamples: [],
       sourceQuestionMarkCount: 0,
       generatedQuestionMarkCount: 0,
+      textBuildErrorCount: 0,
+      textBuildErrorSamples: [],
     };
   }
 
@@ -393,6 +396,7 @@ export class Scene3D {
     return {
       ...this._textDiagnostics,
       glyphMissingSamples: [...this._textDiagnostics.glyphMissingSamples],
+      textBuildErrorSamples: [...(this._textDiagnostics.textBuildErrorSamples || [])],
       shxFontLoaded: !!this._shxFont,
       shxBigFontLoaded: !!this._shxBigFont,
       shxBigFontMapLoaded: !!this._shxBigFontCodeMap,
@@ -415,6 +419,21 @@ export class Scene3D {
     if (this._textDiagnostics.glyphMissingSamples.length >= MAX_TEXT_MISSING_GLYPH_SAMPLES) return;
     if (this._textDiagnostics.glyphMissingSamples.includes(char)) return;
     this._textDiagnostics.glyphMissingSamples.push(char);
+  }
+
+  _recordTextBuildError(err, textPayload) {
+    if (!this._textDiagnostics.textBuildErrorSamples) {
+      this._textDiagnostics.textBuildErrorSamples = [];
+      this._textDiagnostics.textBuildErrorCount = 0;
+    }
+    this._textDiagnostics.textBuildErrorCount += 1;
+    if (this._textDiagnostics.textBuildErrorSamples.length >= MAX_TEXT_MISSING_GLYPH_SAMPLES) return;
+    const message = err instanceof Error ? err.message : String(err || 'unknown');
+    const text = String(textPayload?.text || '').slice(0, 80);
+    const sample = text ? `${message} text=${JSON.stringify(text)}` : message;
+    if (!this._textDiagnostics.textBuildErrorSamples.includes(sample)) {
+      this._textDiagnostics.textBuildErrorSamples.push(sample);
+    }
   }
 
   _sanitizeTextForFont(text) {
@@ -703,7 +722,7 @@ export class Scene3D {
   }
 
   _textLines(textPayload) {
-    const text = normalizeCadTextForDisplay(textPayload?.text);
+    const text = this._cadUnitsFallbackText(this._cadTextUnitsForPayload(textPayload));
     if (!text) return [];
     if (textPayload?.verticalText === true) {
       return [...this._sanitizeTextForFont(text)].filter((char) => char !== '\n');
@@ -719,6 +738,234 @@ export class Scene3D {
       if (Number.isFinite(mapped) && mapped > 0) return mapped;
     }
     return codePoint;
+  }
+
+  _shxTextUnits(text) {
+    const value = String(text || '');
+    const units = [];
+    for (let i = 0; i < value.length;) {
+      if (value[i] === '%' && value[i + 1] === '%') {
+        let j = i + 2;
+        let digits = '';
+        while (j < value.length && digits.length < 3) {
+          const digit = value.charCodeAt(j);
+          if (digit < 48 || digit > 57) break;
+          digits += value[j];
+          j += 1;
+        }
+        if (digits) {
+          units.push({ code: Number.parseInt(digits, 10), raw: value.slice(i, j), escape: true });
+          i = j;
+          continue;
+        }
+      }
+
+      const codePoint = value.codePointAt(i);
+      if (!Number.isFinite(codePoint)) break;
+      const raw = String.fromCodePoint(codePoint);
+      units.push({ code: this._shxCodeForChar(raw), raw, escape: false });
+      i += raw.length;
+    }
+    return units;
+  }
+
+  _shxTextForDisplay(textPayload) {
+    return normalizeCadTextForDisplay(textPayload?.text);
+  }
+
+  _shxCadShapeHasVisibleStrokes(cadShape) {
+    const polylines = cadShape?.polylines;
+    return Array.isArray(polylines) && polylines.some((polyline) => Array.isArray(polyline) && polyline.length >= 2);
+  }
+
+  _shxGlyphFromCadShape(cadShape) {
+    return { polylines: cadShape.polylines, bbox: cadShape.bbox, lastPoint: cadShape.lastPoint };
+  }
+
+  _shxFallbackAdvance(textPayload) {
+    const height = Math.max(1e-6, toFiniteNumber(textPayload?.height, 1));
+    return height * 0.45;
+  }
+
+  _shxGlyphAdvanceFromGlyph(glyph, raw) {
+    const advancePointX = toFiniteNumber(glyph?.shape?.lastPoint?.x, NaN);
+    if (!Number.isFinite(advancePointX) || advancePointX <= 0) {
+      this._recordShxZeroAdvance(raw, glyph);
+      throw new Error(
+        `SHX glyph has no advancePoint: char=${JSON.stringify(raw)} ` +
+        `code=${glyph?.code} source=${glyph?.source} ` +
+        `lastPoint=${JSON.stringify(glyph?.shape?.lastPoint)}`
+      );
+    }
+    return advancePointX;
+  }
+
+  _shxSpaceAdvance(textPayload) {
+    try {
+      return this._shxGlyphAdvance(' ', textPayload, false);
+    } catch {
+      return this._shxFallbackAdvance(textPayload);
+    }
+  }
+
+  _resolveShxGlyphByCode(code, textPayload, { requireVisible = false, recordMissing = true } = {}) {
+    const numericCode = Number(code);
+    if (!Number.isFinite(numericCode)) return null;
+    const entityFont = this._getShxFontByKey(textPayload?.fontKey) || this._shxFont;
+    if (!entityFont || !entityFont.hasChar(numericCode)) {
+      if (recordMissing) this._recordMissingGlyph(`%%${numericCode}`);
+      return { glyph: null, found: false, visible: false };
+    }
+
+    const cadShape = entityFont.getCadCharShape(numericCode, {
+      fontSize: this._shxGlyphFontSizeForFont(textPayload, entityFont),
+      verticalText: textPayload?.verticalText === true,
+    });
+    if (cadShape && (!requireVisible || this._shxCadShapeHasVisibleStrokes(cadShape))) {
+      return {
+        glyph: { shape: this._shxGlyphFromCadShape(cadShape), source: 'entity_font', code: numericCode },
+        found: true,
+        visible: this._shxCadShapeHasVisibleStrokes(cadShape),
+      };
+    }
+    return { glyph: null, found: true, visible: false };
+  }
+
+  _resolveShxUnit(unit, textPayload, recordMissing = false) {
+    if (!unit || unit.raw === '\n') return { glyph: null, advance: 0 };
+    if (unit.raw === '\t') return { glyph: null, advance: this._shxGlyphAdvance('\t', textPayload, recordMissing) };
+
+    if (unit.escape === true) {
+      const resolved = this._resolveShxGlyphByCode(unit.code, textPayload, { requireVisible: true, recordMissing });
+      if (resolved?.glyph) {
+        return { glyph: resolved.glyph, advance: this._shxGlyphAdvanceFromGlyph(resolved.glyph, unit.raw) };
+      }
+      if (resolved?.found) {
+        return { glyph: null, advance: this._shxSpaceAdvance(textPayload) };
+      }
+      const fallback = this._resolveShxGlyph('?', textPayload, false);
+      if (fallback) {
+        if (recordMissing) this._textDiagnostics.generatedQuestionMarkCount += 1;
+        return { glyph: fallback, advance: this._shxGlyphAdvanceFromGlyph(fallback, unit.raw) };
+      }
+      return { glyph: null, advance: this._shxFallbackAdvance(textPayload) };
+    }
+
+    const glyph = this._resolveShxGlyph(unit.raw, textPayload, recordMissing);
+    if (!glyph) return { glyph: null, advance: this._shxFallbackAdvance(textPayload) };
+    return { glyph, advance: this._shxGlyphAdvanceFromGlyph(glyph, unit.raw) };
+  }
+
+  _shxUnitsToText(units) {
+    return Array.isArray(units) ? units.map((unit) => unit?.raw || '').join('') : '';
+  }
+
+  _shxSplitUnitsByNewline(units) {
+    const lines = [[]];
+    for (const unit of Array.isArray(units) ? units : []) {
+      if (unit?.raw === '\n') {
+        lines.push([]);
+      } else {
+        lines[lines.length - 1].push(unit);
+      }
+    }
+    return lines;
+  }
+
+  _trimStartShxUnits(units) {
+    const out = Array.isArray(units) ? [...units] : [];
+    while (out.length && /^\s+$/u.test(out[0]?.raw || '')) out.shift();
+    return out;
+  }
+
+  _trimEndShxUnits(units) {
+    const out = Array.isArray(units) ? [...units] : [];
+    while (out.length && /^\s+$/u.test(out[out.length - 1]?.raw || '')) out.pop();
+    return out;
+  }
+
+  _shxWrapUnitLineToWidth(units, textPayload, maxWidth) {
+    const rawUnits = Array.isArray(units) ? units : [];
+    if (!rawUnits.length || maxWidth <= 1e-6) return [rawUnits];
+    if (this._shxTextLineAdvance(rawUnits, textPayload, false) <= maxWidth) return [rawUnits];
+
+    const tokens = [];
+    let currentToken = [];
+    let currentWhitespace = null;
+    const pushToken = () => {
+      if (currentToken.length) tokens.push(currentToken);
+      currentToken = [];
+      currentWhitespace = null;
+    };
+
+    for (const unit of rawUnits) {
+      const isWhitespace = /^\s+$/u.test(unit?.raw || '');
+      if (currentWhitespace === null || currentWhitespace === isWhitespace) {
+        currentToken.push(unit);
+        currentWhitespace = isWhitespace;
+      } else {
+        pushToken();
+        currentToken.push(unit);
+        currentWhitespace = isWhitespace;
+      }
+    }
+    pushToken();
+
+    const wrapped = [];
+    let current = [];
+    const appendCurrent = () => {
+      const line = this._trimEndShxUnits(current);
+      if (line.length) wrapped.push(line);
+      current = [];
+    };
+    const advance = (line) => this._shxTextLineAdvance(line, textPayload, false);
+    const appendTokenByUnit = (token) => {
+      for (const unit of token) {
+        const candidate = current.length ? [...current, unit] : [unit];
+        if (current.length && advance(candidate) > maxWidth) {
+          appendCurrent();
+          current = [unit];
+        } else {
+          current = candidate;
+        }
+      }
+    };
+
+    for (const token of tokens) {
+      const isWhitespace = token.every((unit) => /^\s+$/u.test(unit?.raw || ''));
+      const tokenText = this._shxUnitsToText(token);
+      const candidate = current.length ? [...current, ...token] : this._trimStartShxUnits(token);
+      if (advance(candidate) <= maxWidth) {
+        current = candidate;
+        continue;
+      }
+      if (!isWhitespace && token.length > 1 && isCjkText(tokenText)) {
+        appendTokenByUnit(token);
+        continue;
+      }
+      appendCurrent();
+      if (!isWhitespace) {
+        if (isCjkText(tokenText) && advance(token) > maxWidth) {
+          appendTokenByUnit(token);
+        } else {
+          current = token;
+        }
+      }
+    }
+
+    appendCurrent();
+    return wrapped.length ? wrapped : [rawUnits];
+  }
+
+  _cadTextUnitsForPayload(textPayload) {
+    const text = normalizeCadTextForDisplay(textPayload?.text);
+    return text ? this._shxTextUnits(text) : [];
+  }
+
+  _cadUnitsFallbackText(units) {
+    return Array.isArray(units)
+      ? units.map((unit) => unit?.escape === true ? '?' : unit?.raw || '').join('')
+      : '';
   }
 
   /**
@@ -747,6 +994,34 @@ export class Scene3D {
     if (!fontKey) return null;
     const font = this._shxFontByKey.get(fontKey);
     return font || null;
+  }
+
+  _isShxFontKeyPending(fontKey) {
+    return !!fontKey && this._shxFontByKey.has(fontKey) && !this._shxFontByKey.get(fontKey);
+  }
+
+  _textPayloadUsesEntityShxFont(textPayload) {
+    const fontKind = String(textPayload?.fontKind || '').toLowerCase();
+    const fontName = String(textPayload?.fontName || '').toLowerCase();
+    const bigFontName = String(textPayload?.bigFontName || '').toLowerCase();
+    return fontKind === 'shx' || fontName.endsWith('.shx') || !!textPayload?.bigFontKey || bigFontName.endsWith('.shx');
+  }
+
+  _ensureTextPayloadFontsLoaded(textPayload) {
+    if (!this._textPayloadUsesEntityShxFont(textPayload)) return true;
+    let pending = false;
+    const ensure = (fontKey) => {
+      if (!fontKey) return;
+      if (this._shxFontByKey.has(fontKey)) {
+        pending = pending || this._isShxFontKeyPending(fontKey);
+        return;
+      }
+      pending = true;
+      this._loadShxFontByKey(fontKey).then(() => { this.needsUpdateGPUData = true; });
+    };
+    ensure(textPayload?.fontKey);
+    ensure(textPayload?.bigFontKey);
+    return !pending;
   }
 
   /**
@@ -1073,12 +1348,12 @@ export class Scene3D {
     return advance * widthFactor;
   }
 
-  _shxTextLineAdvance(text, textPayload, recordMissing = false) {
+  _shxTextLineAdvance(textOrUnits, textPayload, recordMissing = false) {
     const widthFactor = safeWidthFactor(textPayload?.widthFactor);
+    const units = Array.isArray(textOrUnits) ? textOrUnits : this._shxTextUnits(textOrUnits);
     let advance = 0;
-    for (const char of String(text || '')) {
-      if (char === '\n') continue;
-      advance += this._shxGlyphAdvance(char, textPayload, recordMissing);
+    for (const unit of units) {
+      advance += toFiniteNumber(this._resolveShxUnit(unit, textPayload, recordMissing)?.advance, 0);
     }
     return advance * widthFactor;
   }
@@ -1096,37 +1371,46 @@ export class Scene3D {
    * 整段文本作为单行返回；vertical 时按字符切，但仍不引入换行。
    */
   _shxTextLines_text(textPayload) {
-    const text = normalizeCadTextForDisplay(textPayload?.text);
+    const text = this._shxTextForDisplay(textPayload);
     if (!text) return [];
+    const units = this._shxTextUnits(text);
     if (textPayload?.verticalText === true) {
-      return [...text].filter((char) => char !== '\n');
+      return units.filter((unit) => unit.raw !== '\n').map((unit) => [unit]);
     }
-    return [text];
+    return [units];
   }
 
   /**
    * MTEXT 行集合：保留 \n 切行 + width 包裹（layoutMText），并写入诊断计数。
    */
   _shxTextLines_mtext(textPayload) {
-    const text = normalizeCadTextForDisplay(textPayload?.text);
+    const text = this._shxTextForDisplay(textPayload);
     if (!text) return [];
+    const units = this._shxTextUnits(text);
     if (textPayload?.verticalText === true) {
-      return [...text].filter((char) => char !== '\n');
+      return units.filter((unit) => unit.raw !== '\n').map((unit) => [unit]);
     }
-    const lines = this._wrapTextToWidth(text, textPayload, (line) => this._shxTextLineAdvance(line, textPayload, false));
     const width = toFiniteNumber(textPayload?.width, 0);
+    const explicitUnitLines = this._shxSplitUnitsByNewline(units);
+    const unitLines = [];
     if (width > 1e-6) {
+      for (const line of explicitUnitLines) {
+        const wrapped = this._shxWrapUnitLineToWidth(line, textPayload, width);
+        for (const item of wrapped) unitLines.push(item);
+      }
       this._textDiagnostics.mtextDefinedWidthCount += 1;
-      this._textDiagnostics.mtextWrappedLineCount += lines.length;
+      this._textDiagnostics.mtextWrappedLineCount += unitLines.length;
       this._textDiagnostics.shxWrapWidth = Math.max(this._textDiagnostics.shxWrapWidth || 0, width);
+    } else {
+      for (const line of explicitUnitLines) unitLines.push(line);
     }
-    for (const line of lines) {
+    for (const line of unitLines) {
       this._textDiagnostics.shxMaxLineAdvance = Math.max(
         this._textDiagnostics.shxMaxLineAdvance || 0,
         this._shxTextLineAdvance(line, textPayload, false)
       );
     }
-    return lines;
+    return unitLines;
   }
 
   _mergeTextGeometries(geometries) {
@@ -1236,13 +1520,14 @@ export class Scene3D {
     const lineHeight = Math.max(1e-6, textPayload.height * TEXT_LINE_HEIGHT_FACTOR);
 
     for (let i = 0; i < lines.length; i += 1) {
-      const line = String(lines[i] || '').trimEnd();
+      const units = Array.isArray(lines[i]) ? lines[i] : this._shxTextUnits(lines[i]);
       const lineY = -i * lineHeight;
       let cursorX = 0;
 
-      for (const char of line) {
-        const advance = advanceFn(char, textPayload, true);
-        const glyph = this._resolveShxGlyph(char, textPayload, false);
+      for (const unit of units) {
+        const resolved = this._resolveShxUnit(unit, textPayload, true);
+        const advance = toFiniteNumber(resolved?.advance, 0);
+        const glyph = resolved?.glyph;
         // getCadCharShape 返回的坐标已按 fontSize 缩放，不需要额外的 bigfontScale
         const glyphYOffset = this._shxGlyphYOffset(glyph, textPayload);
         const polylines = Array.isArray(glyph?.shape?.polylines) ? glyph.shape.polylines : [];
@@ -1308,14 +1593,7 @@ export class Scene3D {
       throw new Error('_buildShxStrokeTextGeometry_text 不能用于 MTEXT');
     }
     if (!this._shxFont) return null;
-    const fontKey = textPayload?.fontKey;
-    if (fontKey && !this._shxFontByKey.has(fontKey)) {
-      this._loadShxFontByKey(fontKey).then(() => { this.needsUpdateGPUData = true; });
-    }
-    const bigFontKey = textPayload?.bigFontKey;
-    if (bigFontKey && !this._shxFontByKey.has(bigFontKey)) {
-      this._loadShxFontByKey(bigFontKey).then(() => { this.needsUpdateGPUData = true; });
-    }
+    if (!this._ensureTextPayloadFontsLoaded(textPayload)) return null;
     const lines = this._shxTextLines_text(textPayload);
     const geometry = this._buildShxStrokeLineGeometry(lines, textPayload, (c, p, r) => this._shxGlyphAdvance(c, p, r));
     if (!geometry) return null;
@@ -1331,14 +1609,7 @@ export class Scene3D {
       throw new Error('_buildShxStrokeTextGeometry_mtext 只能用于 MTEXT');
     }
     if (!this._shxFont) return null;
-    const fontKey = textPayload?.fontKey;
-    if (fontKey && !this._shxFontByKey.has(fontKey)) {
-      this._loadShxFontByKey(fontKey).then(() => { this.needsUpdateGPUData = true; });
-    }
-    const bigFontKey = textPayload?.bigFontKey;
-    if (bigFontKey && !this._shxFontByKey.has(bigFontKey)) {
-      this._loadShxFontByKey(bigFontKey).then(() => { this.needsUpdateGPUData = true; });
-    }
+    if (!this._ensureTextPayloadFontsLoaded(textPayload)) return null;
     const lines = this._shxTextLines_mtext(textPayload);
     const geometry = this._buildShxStrokeLineGeometry(lines, textPayload, (c, p, r) => this._shxGlyphAdvance(c, p, r));
     if (!geometry) return null;
@@ -1409,11 +1680,19 @@ export class Scene3D {
     this._textDiagnostics.textObjectCount += 1;
     this._textDiagnostics.curveSegments = normalizeCurveSegments(this.textCurveSegments);
 
-    const shxObject = textPayload?.isMText === true
-      ? this._buildShxStrokeMTextObject(textPayload)
-      : this._buildShxStrokeTextObject(textPayload);
+    let shxObject = null;
+    try {
+      shxObject = textPayload?.isMText === true
+        ? this._buildShxStrokeMTextObject(textPayload)
+        : this._buildShxStrokeTextObject(textPayload);
+    } catch (err) {
+      this._recordTextBuildError(err, textPayload);
+    }
     if (shxObject) {
       return shxObject;
+    }
+    if (this.shxStrokeTextEnabled === true && this._shxFont && !this._ensureTextPayloadFontsLoaded(textPayload)) {
+      return null;
     }
 
     if (!this._parsedFont) {
@@ -1455,7 +1734,7 @@ export class Scene3D {
   }
 
   _buildTextSpriteFallback(textPayload) {
-    const text = normalizeCadTextForDisplay(textPayload.text);
+    const text = this._cadUnitsFallbackText(this._cadTextUnitsForPayload(textPayload));
     if (!text) return null;
     const lines = text.split('\n');
 
