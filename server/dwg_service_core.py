@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from urllib import parse as urllib_parse
 
+from server.dwg.document_model.document import CadDocument
+from server.dwg.document_model.builders.from_oda_dump import build_cad_document_from_session_data
 from server.dwg.entities.primitive_builder import build_entity_primitives
 from server.dwg.entities.primitives_common import PrimitiveBuildContext
 from server.dwg.dimension.payload import DimensionPayloadContext, build_dimension_payload
@@ -182,6 +184,7 @@ class DwgDocSession:
     shx_diagnostics_unavailable: bool = False
     shx_debug_match: Optional[Dict[str, object]] = None
     remote_doc_id: Optional[str] = None
+    document: Optional[CadDocument] = None
 
 
 class DwgServiceCore:
@@ -313,6 +316,22 @@ class DwgServiceCore:
             else:
                 put_item(k, v)
         return out
+
+    def _build_cad_document_from_session(self, session: DwgDocSession) -> CadDocument:
+        return build_cad_document_from_session_data(
+            doc_id=session.doc_id,
+            spaces=session.spaces,
+            entities_by_space=session.entities_by_space,
+            block_refs_by_space=session.block_refs_by_space,
+            layer_styles=session.layer_styles,
+            linetype_styles=session.linetype_styles,
+            text_styles=session.text_styles,
+            dim_styles=session.dim_styles,
+            header_dim_defaults=session.header_dim_defaults,
+            block_catalog=session.block_catalog,
+            warnings=session.warnings,
+            source=session.mode,
+        )
 
     def _resolve_font_file(self, font_hint: object) -> Optional[Path]:
         hint = str(font_hint or "").strip()
@@ -1494,6 +1513,7 @@ class DwgServiceCore:
                         warnings.append(warning_text)
 
             session.view_state["entity_count"] = total_entities
+            session.document = self._build_cad_document_from_session(session)
             self.sessions[doc_id] = session
             shx_font_urls = self._resolve_shx_font_urls(session, doc_id)
             return {
@@ -1527,6 +1547,7 @@ class DwgServiceCore:
             text_styles={},
             warnings=warnings,
         )
+        session.document = self._build_cad_document_from_session(session)
         self.sessions[doc_id] = session
         return {
             "doc_id": doc_id,
