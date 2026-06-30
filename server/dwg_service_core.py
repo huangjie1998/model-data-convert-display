@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from urllib import parse as urllib_parse
 
-from server.dwg.document_model.document import CadDocument
-from server.dwg.document_model.builders.from_oda_dump import build_cad_document_from_session_data
+from server.dwg.cad_model.document import CadDocument
+from server.dwg.cad_model.builders.from_oda_dump import build_cad_document_from_oda_dump, build_cad_document_from_session_data
+from server.dwg.cad_model.builders.compatibility_export import export_compatibility_data
 from server.dwg.entities.primitive_builder import build_entity_primitives
 from server.dwg.entities.primitives_common import PrimitiveBuildContext
 from server.dwg.dimension.payload import DimensionPayloadContext, build_dimension_payload
@@ -185,6 +186,7 @@ class DwgDocSession:
     shx_debug_match: Optional[Dict[str, object]] = None
     remote_doc_id: Optional[str] = None
     document: Optional[CadDocument] = None
+    oda_dump_path: Optional[Path] = None
 
 
 class DwgServiceCore:
@@ -376,6 +378,45 @@ class DwgServiceCore:
 
     def _run_oda_read_dump(self, file_path: Path) -> str:
         return run_oda_read_dump(self, file_path, ExternalCoreError)
+
+    def _save_oda_dump_artifact(self, doc_id: str, dump_text: str) -> Optional[Path]:
+        try:
+            dump_dir = self.uploads_dir / "oda-dumps"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            dump_path = dump_dir / f"{doc_id}.dump.txt"
+            dump_path.write_text(dump_text, encoding="utf-8")
+            return dump_path
+        except Exception:
+            return None
+
+    def _parse_oda_dump_for_cad_model(self, dump_text: str) -> Dict[str, object]:
+        (
+            spaces,
+            entities_by_space,
+            block_refs_by_space,
+            warnings,
+            layer_styles,
+            linetype_styles,
+            text_styles,
+            header_dim_defaults,
+            semantic_tables,
+        ) = self._parse_oda_dump(dump_text)
+        if not spaces:
+            spaces = [{"id": "model", "display_name": "Model", "kind": "model"}]
+        dim_styles = semantic_tables.get("dim_styles", {}) if isinstance(semantic_tables.get("dim_styles"), dict) else {}
+        block_catalog = semantic_tables.get("blocks", {}) if isinstance(semantic_tables.get("blocks"), dict) else {}
+        return {
+            "spaces": spaces,
+            "entities_by_space": entities_by_space,
+            "block_refs_by_space": block_refs_by_space,
+            "warnings": warnings,
+            "layer_styles": layer_styles,
+            "linetype_styles": linetype_styles,
+            "text_styles": text_styles,
+            "dim_styles": dim_styles,
+            "header_dim_defaults": header_dim_defaults,
+            "block_catalog": block_catalog,
+        }
 
     def _is_oda_vectorize_available(self) -> bool:
         return is_oda_vectorize_available(self)
@@ -1354,27 +1395,33 @@ class DwgServiceCore:
 
         if self.mode == "oda_cli":
             dump_text = self._run_oda_read_dump(file_path)
-            (
-                spaces,
-                entities_by_space,
-                block_refs_by_space,
-                warnings,
-                layer_styles,
-                linetype_styles,
-                text_styles,
-                header_dim_defaults,
-                semantic_tables,
-            ) = self._parse_oda_dump(dump_text)
-            dim_styles = (
-                semantic_tables.get("dim_styles", {})
-                if isinstance(semantic_tables.get("dim_styles"), dict)
-                else {}
+            doc_id = str(uuid.uuid4())
+            oda_dump_path = self._save_oda_dump_artifact(doc_id, dump_text)
+            document = build_cad_document_from_oda_dump(
+                doc_id=doc_id,
+                dump_text=dump_text,
+                parse_legacy_dump=self._parse_oda_dump_for_cad_model,
+                source="oda_cli",
             )
-            block_catalog = (
-                semantic_tables.get("blocks", {})
-                if isinstance(semantic_tables.get("blocks"), dict)
-                else {}
-            )
+            compatibility_data = export_compatibility_data(document)
+            spaces = [dict(item) for item in compatibility_data.get("spaces", []) if isinstance(item, dict)]
+            entities_by_space = {
+                str(space_id): [dict(item) for item in items if isinstance(item, dict)]
+                for space_id, items in (compatibility_data.get("entities_by_space") or {}).items()
+                if isinstance(items, list)
+            }
+            block_refs_by_space = {
+                str(space_id): [dict(item) for item in items if isinstance(item, dict)]
+                for space_id, items in (compatibility_data.get("block_refs_by_space") or {}).items()
+                if isinstance(items, list)
+            }
+            warnings = list(document.warnings)
+            layer_styles = dict(compatibility_data.get("layer_styles") or {})
+            linetype_styles = dict(compatibility_data.get("linetype_styles") or {})
+            text_styles = dict(compatibility_data.get("text_styles") or {})
+            header_dim_defaults = dict(compatibility_data.get("header_dim_defaults") or {})
+            dim_styles = dict(compatibility_data.get("dim_styles") or {})
+            block_catalog = dict(compatibility_data.get("block_catalog") or {})
             if not spaces:
                 spaces = [{"id": "model", "display_name": "Model", "kind": "model"}]
             current_space = "model" if any(s.get("id") == "model" for s in spaces) else str(spaces[0].get("id", "model"))
@@ -1465,7 +1512,6 @@ class DwgServiceCore:
             if total_entities == 0:
                 warnings.append("ODA 已加载 DWG，但尚未提取到可显示的受支持图元。")
 
-            doc_id = str(uuid.uuid4())
             session = DwgDocSession(
                 doc_id=doc_id,
                 file_path=file_path,
@@ -1490,6 +1536,7 @@ class DwgServiceCore:
                 shx_fallback_text_count=shx_fallback_text_count,
                 shx_debug_match=shx_debug_match if self.enable_shx_debug_match else None,
                 current_space=current_space,
+                oda_dump_path=oda_dump_path,
             )
             fonts_preview = self._collect_session_fonts(session)
             shx_diag = self._build_shx_diagnostics_from_fonts(fonts_preview)
@@ -1513,7 +1560,8 @@ class DwgServiceCore:
                         warnings.append(warning_text)
 
             session.view_state["entity_count"] = total_entities
-            session.document = self._build_cad_document_from_session(session)
+            document.warnings = warnings
+            session.document = document
             self.sessions[doc_id] = session
             shx_font_urls = self._resolve_shx_font_urls(session, doc_id)
             return {
