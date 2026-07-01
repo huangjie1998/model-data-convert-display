@@ -20,9 +20,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from urllib import parse as urllib_parse
 
-from server.dwg.cad_model.document import CadDocument
-from server.dwg.cad_model.builders.from_oda_dump import build_cad_document_from_oda_dump, build_cad_document_from_session_data
-from server.dwg.cad_model.builders.compatibility_export import export_compatibility_data
+from server.dwg.model_document import CadDocument
+from server.dwg.model_builders.from_oda_dump import build_cad_document_from_oda_dump, build_cad_document_from_session_data
+from server.dwg.model_builders.compatibility_export import export_compatibility_data
 from server.dwg.entities.primitive_builder import build_entity_primitives
 from server.dwg.entities.primitives_common import PrimitiveBuildContext
 from server.dwg.dimension.payload import DimensionPayloadContext, build_dimension_payload
@@ -389,7 +389,7 @@ class DwgServiceCore:
         except Exception:
             return None
 
-    def _parse_oda_dump_for_cad_model(self, dump_text: str) -> Dict[str, object]:
+    def _parse_oda_dump_for_dwg_model(self, dump_text: str) -> Dict[str, object]:
         (
             spaces,
             entities_by_space,
@@ -1400,7 +1400,7 @@ class DwgServiceCore:
             document = build_cad_document_from_oda_dump(
                 doc_id=doc_id,
                 dump_text=dump_text,
-                parse_legacy_dump=self._parse_oda_dump_for_cad_model,
+                parse_legacy_dump=self._parse_oda_dump_for_dwg_model,
                 source="oda_cli",
             )
             compatibility_data = export_compatibility_data(document)
