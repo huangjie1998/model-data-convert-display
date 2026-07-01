@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from server.dwg.dwg_model.ac_db_database import AcDbDatabase
+from server.dwg.dwg_model import AcDbDatabase
 from server.dwg.dwg_model import AcDbObject
 
 

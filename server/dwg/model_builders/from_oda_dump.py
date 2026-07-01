@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, Dict, Iterable, List
 
-from server.dwg.dwg_model.ac_db_database import AcDbDatabase
+from server.dwg.dwg_model import AcDbDatabase
 from server.dwg.model_document import CadDocument
 from server.dwg.dwg_model import AcDbEntity
 from server.dwg.model_builders.entity_factory import build_entity_from_raw

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List
 
-from server.dwg.dwg_model.ac_db_database import AcDbDatabase
+from server.dwg.dwg_model import AcDbDatabase
 from server.dwg.model_core.diagnostics import CadDiagnostic
 
 
