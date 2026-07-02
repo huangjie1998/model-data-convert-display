@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable
 
-from server.dwg.dwg_model.classes import AcDbBlockTableRecord
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.SymbolTableRecords.AcDbSymbolTableRecord import AcDbBlockTableRecord
 from server.dwg.model_core.identity.object_id import cad_object_id
 
 

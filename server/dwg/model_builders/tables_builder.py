@@ -3,16 +3,20 @@ from __future__ import annotations
 from typing import Dict
 
 from server.dwg.model_core.identity.object_id import cad_object_id
-from server.dwg.dwg_model.classes import AcDbBlockTableRecord
-from server.dwg.dwg_model.classes import AcDbDimStyleTableRecord
-from server.dwg.dwg_model.classes import AcDbLayerTableRecord
-from server.dwg.dwg_model.classes import AcDbLinetypeTableRecord
-from server.dwg.dwg_model.classes import AcDbTextStyleTableRecord
-from server.dwg.dwg_model.classes import AcDbBlockTable
-from server.dwg.dwg_model.classes import AcDbDimStyleTable
-from server.dwg.dwg_model.classes import AcDbLayerTable
-from server.dwg.dwg_model.classes import AcDbLinetypeTable
-from server.dwg.dwg_model.classes import AcDbTextStyleTable
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.SymbolTableRecords.AcDbSymbolTableRecord import (
+    AcDbBlockTableRecord,
+    AcDbDimStyleTableRecord,
+    AcDbLayerTableRecord,
+    AcDbLinetypeTableRecord,
+    AcDbTextStyleTableRecord,
+)
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.SymbolTables.AcDbSymbolTable import (
+    AcDbBlockTable,
+    AcDbDimStyleTable,
+    AcDbLayerTable,
+    AcDbLinetypeTable,
+    AcDbTextStyleTable,
+)
 
 
 def build_layer_table(raw: Dict[str, Dict[str, object]]) -> AcDbLayerTable:

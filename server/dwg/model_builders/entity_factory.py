@@ -3,79 +3,94 @@ from __future__ import annotations
 from typing import Dict, Type
 
 from server.dwg.model_core.diagnostics import diagnostic
-from server.dwg.dwg_model import AcDbEntity
-from server.dwg.dwg_model.classes import (
-    AcDb2dPolyline,
-    AcDb2dVertex,
-    AcDb3dPolyline,
-    AcDb3dPolylineVertex,
-    AcDb3dSolid,
-    AcDbAlignedDimension,
-    AcDbAngularDimension,
-    AcDbArc,
-    AcDbArcDimension,
-    AcDbAttribute,
-    AcDbAttributeDefinition,
-    AcDbBlockBegin,
-    AcDbBlockEnd,
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.ac_db_entity import AcDbEntity
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.Basics import (
     AcDbBlockReference,
-    AcDbBody,
     AcDbCamera,
-    AcDbCircle,
-    AcDbDiametricDimension,
-    AcDbEllipse,
-    AcDbExtrudedSurface,
     AcDbFace,
-    AcDbFaceRecord,
-    AcDbFcf,
     AcDbFrame,
     AcDbHatch,
-    AcDbHelix,
-    AcDbLeader,
     AcDbLight,
-    AcDbLine,
     AcDbMInsertBlock,
     AcDbMLeader,
     AcDbMText,
     AcDbMline,
-    AcDbNurbSurface,
     AcDbOle2Frame,
     AcDbOleFrame,
-    AcDbOrdinateDimension,
-    AcDbPlaneSurface,
     AcDbPoint,
     AcDbPointCloud,
     AcDbPointCloudEx,
     AcDbPolyFaceMesh,
-    AcDbPolyFaceMeshVertex,
     AcDbPolygonMesh,
-    AcDbPolygonMeshVertex,
-    AcDbPolyline,
     AcDbProxyEntity,
-    AcDbRadialDimension,
-    AcDbRadialDimensionLarge,
     AcDbRasterImage,
-    AcDbRegion,
-    AcDbRevolvedSurface,
-    AcDbRotatedDimension,
     AcDbSection,
-    AcDbSequenceEnd,
     AcDbShape,
     AcDbSolid,
-    AcDbSpline,
-    AcDbSubDMesh,
-    AcDbSurface,
-    AcDbSweptSurface,
     AcDbTable,
     AcDbText,
-    AcDbUnderlayReference,
-    AcDbVertex,
-    AcDbViewBorder,
     AcDbViewRepBlockReference,
-    AcDbViewSymbol,
     AcDbViewport,
     AcDbWipeout,
+)
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.Basics.AcDbText import (
+    AcDbAttribute,
+    AcDbAttributeDefinition,
+)
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.BracketEntities import (
+    AcDbBlockBegin,
+    AcDbBlockEnd,
+    AcDbSequenceEnd,
+)
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.Curves.AcDbCurve import (
+    AcDb2dPolyline,
+    AcDb3dPolyline,
+    AcDbArc,
+    AcDbCircle,
+    AcDbEllipse,
+    AcDbHelix,
+    AcDbLeader,
+    AcDbLine,
+    AcDbPolyline,
+    AcDbSpline,
     AcDbXline,
+)
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.Dimensions.AcDbDimension import (
+    AcDbAlignedDimension,
+    AcDbAngularDimension,
+    AcDbArcDimension,
+    AcDbDiametricDimension,
+    AcDbOrdinateDimension,
+    AcDbRadialDimension,
+    AcDbRadialDimensionLarge,
+    AcDbRotatedDimension,
+)
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.ModelDocumentation import (
+    AcDbViewBorder,
+    AcDbViewSymbol,
+)
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.Modeling2D3D import (
+    AcDb3dSolid,
+    AcDbBody,
+    AcDbRegion,
+    AcDbSubDMesh,
+)
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.Surfaces import AcDbSurface
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.Surfaces.AcDbSurface import (
+    AcDbExtrudedSurface,
+    AcDbNurbSurface,
+    AcDbPlaneSurface,
+    AcDbRevolvedSurface,
+    AcDbSweptSurface,
+)
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.Underlays import AcDbUnderlayReference
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.VertexSubentities import AcDbVertex
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.AcDbEntity.VertexSubentities.AcDbVertex import (
+    AcDb2dVertex,
+    AcDb3dPolylineVertex,
+    AcDbFaceRecord,
+    AcDbPolyFaceMeshVertex,
+    AcDbPolygonMeshVertex,
 )
 from server.dwg.model_builders.entity_common import entity_bbox, entity_geometry, entity_style
 from server.dwg.model_core.identity.object_id import cad_object_id
@@ -124,10 +139,6 @@ _ENTITY_CLASSES: Dict[str, Type[AcDbEntity]] = {
     "LEADER": AcDbLeader,
     "MLEADER": AcDbMLeader,
     "MULTILEADER": AcDbMLeader,
-    "TOLERANCE": AcDbFcf,
-    "FCF": AcDbFcf,
-    "FEATURECONTROLFRAME": AcDbFcf,
-    "FEATURE_CONTROL_FRAME": AcDbFcf,
     "VERTEX": AcDbVertex,
     "2DVERTEX": AcDb2dVertex,
     "2D_VERTEX": AcDb2dVertex,

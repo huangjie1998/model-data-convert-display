@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Dict
 
-from server.dwg.dwg_model import AcDbDatabase
-from server.dwg.dwg_model import AcDbObject
+from server.dwg.dwg_model.AcRxObject.DatabaseReleated import AcDbDatabase
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.ac_db_object import AcDbObject
 
 
 def build_properties_payload(database: AcDbDatabase, obj: AcDbObject) -> Dict[str, object]:

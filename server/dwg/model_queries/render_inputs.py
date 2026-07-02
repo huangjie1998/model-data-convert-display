@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from server.dwg.dwg_model import AcDbDatabase
-from server.dwg.dwg_model import AcDbEntity
+from server.dwg.dwg_model.AcRxObject.DatabaseReleated import AcDbDatabase
+from server.dwg.dwg_model.AcRxObject.DatabaseObjects.AcDbObject.Entities.ac_db_entity import AcDbEntity
 
 
 def iter_renderable_entities(database: AcDbDatabase, space_id: str) -> Iterable[AcDbEntity]:
